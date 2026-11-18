@@ -84,6 +84,27 @@ and source persistence across an additional cold reboot for that exact ISO.
 
 ## Historical broader compile inventory (2026-11-10)
 
+### Follow-up on 147 later blocked probes (2026-11-17)
+
+A fresh-session PCI QEMU recheck of 147 entries reported blocked in a later
+catalog found 49 compile, six deliberately skipped, and 92 that still fail or
+exhaust the compiler arena. The skipped entries are the x86 SSE diagnostic,
+three legacy NIC drivers, a PCNet-specific test, and a utility that relies on
+the unavailable compiler-private `LexExcept` API. The remaining diagnostics
+include missing symbols or context, x86 assembler, and unbound external data;
+they are not a count of missing user-facing applications. One text-conversion
+source exhausts the compiler arena on a sparse switch. The
+[per-file classification](docs/acceptance/utm-source-probe-reclassification-2026-11-17.json)
+records the first diagnostic, which is a starting point rather than a proven
+root cause. These probes use bundled source overlays and do not establish
+unchanged-source or runtime compatibility.
+
+The catalog no longer resets and partially reconstructs the desktop compiler
+context after ordinary isolated-task failures. A focused regression verifies
+that an expected failure is followed by successful compilation of a real
+system utility. The complete 340-entry sweep still needs a successful rerun:
+the unmodified run exhausted the compiler arena before completing.
+
 A targeted PCI QEMU compile-only sweep covered 290 selected Apps and support
 sources: 193 compiled and 97 did not compile in isolation. All 20 selected
 `/Apps` entrypoints/components and all 16 selected `/Demo` sources compiled.

@@ -72,6 +72,8 @@ p.add_argument('--probe-stock-programs', action='store_true',
                help='run unchanged pinned NetOfDots and Lines in the graphical terminal')
 p.add_argument('--probe-program-catalog', action='store_true',
                help='report compile-only results for original application entry points in isolated tasks')
+p.add_argument('--probe-catalog-recovery', action='store_true',
+               help='with --probe-program-catalog, check source compilation after an expected isolated failure')
 p.add_argument('--probe-network-runtime', action='store_true',
                help='bring up stock networking over native VirtIO-net, require DHCP, and exercise Gopher against a local fixture')
 p.add_argument('--probe-telnet-runtime', action='store_true',
@@ -10422,6 +10424,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         raise SystemExit('unknown program catalog path(s): '+', '.join(missing_paths))
                     paths = [path for path in paths
                              if path in set(args.program_catalog_path)]
+                if args.probe_catalog_recovery:
+                    # Exercise the same failure handling as the complete
+                    # catalog, followed by a real document-bearing utility.
+                    paths = ['/Tests/NoWarnInvalid.ZC', '/System/Utils/SysRep.ZC']
             results = []
             catalog_failed = False
             network_stack_loaded = False
@@ -10602,31 +10608,17 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         command('zreset', 'native compiler ready')
                         network_stack_loaded = False
                         continue
-                    # A negative compile probe increments the guest compiler's
-                    # failure counter. Reset it before the next independent
-                    # candidate so one expected blocker cannot poison later
-                    # catalog results or the normal-loader checks.
-                    command('zreset', 'native compiler ready')
-                    command('zload /Kernel/KernelA.HH',
-                            'zc: loaded /Kernel/KernelA.HH')
-                    command('zload /Kernel/KernelB.HH',
-                            'zc: loaded /Kernel/KernelB.HH')
-                    command('zload /Kernel/KMathB.ZC',
-                            'zc: loaded /Kernel/KMathB.ZC')
-                    command('zload /Kernel/KernelC.HH',
-                            'zc: loaded /Kernel/KernelC.HH')
-                    command('zload /System/TaskBridge.ZC',
-                            'zc: loaded /System/TaskBridge.ZC')
-                    command('zload /System/Externs.ZC',
-                            'zc: loaded /System/Externs.ZC')
-                    command('zload /Tests/ProgramCatalog.ZC',
-                            'zc: loaded /Tests/ProgramCatalog.ZC')
-                    command('zload /Tests/SourceMacros.ZC',
-                            'zc: loaded /Tests/SourceMacros.ZC')
-                    command('zcall StockSourceMacroChecks',
-                            'zc => 0x000000000000002a')
-                    command('zcall StockNoWarnChecks',
-                            'zc => 0x000000000000002a')
+                    # These helpers compile in disposable tasks. Resetting the
+                    # global compiler here discards desktop document context,
+                    # and the partial reload used to make unrelated later
+                    # source probes fail. Preserve the booted namespace.
+            if args.probe_catalog_recovery:
+                if [(x['path'], x['compiled']) for x in results] != [
+                        ('/Tests/NoWarnInvalid.ZC', False),
+                        ('/System/Utils/SysRep.ZC', True)]:
+                    raise RuntimeError('isolated compile failure damaged later source context')
+                print('PASS isolated compiler failure preserves desktop source context', flush=True)
+                raise SystemExit(0)
             normal_loads = []
             for path in (() if not run_program_catalog or targeted_network_compile or
                          (args.program_catalog_path and catalog_failed) else
@@ -10774,7 +10766,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                       f'{len(demo_results)} compiled; results in '
                       f'{demo_catalog_path.relative_to(ROOT)}',
                       flush=True)
-            if args.probe_demo_source_catalog or args.program_catalog_path:
+            if args.probe_demo_source_catalog or args.program_catalog_path or catalog_failed:
                 # Compile-only inventories intentionally exercise sources that
                 # can fail to compile. Require the shell to remain ready rather
                 # than requiring a clean cumulative compiler failure counter.

@@ -1,0 +1,712 @@
+{
+  "date": "2026-11-17",
+  "source_commit": "eee210f4379ba3d00b47507f336a158eefb2c993",
+  "scope": "Reprobe of 147 previously blocked catalog entries, in fresh QEMU/UTM PCI guest sessions; compile-only, with the bundled source overlays. Classification reflects first diagnostic and is not proof of root cause. Six explicit skips were not compiled. ToTXT was tested separately due to compiler arena exhaustion.",
+  "batches": [
+    35,
+    35,
+    35,
+    35,
+    6,
+    1
+  ],
+  "counts": {
+    "explicitly_skipped": 6,
+    "unresolved_name_or_context": 27,
+    "unknown_symbol": 28,
+    "type_or_context": 8,
+    "unbound_external": 6,
+    "assembler_unavailable": 15,
+    "compiles_in_fresh_session": 49,
+    "other_diagnostic": 7,
+    "compiler_arena_exhaustion": 1
+  },
+  "results": [
+    {
+      "path": "/Home/SSE.ZC",
+      "category": "explicitly_skipped",
+      "diagnostic": "not compiled: this upstream diagnostic specifically uses x86 SSE instructions; it is not an ARM64 program"
+    },
+    {
+      "path": "/Home/Net/Drivers/E1000.ZC",
+      "category": "explicitly_skipped",
+      "diagnostic": "not compiled: stock driver requires a legacy x86 PCI NIC; ARM64 target network path is VirtIO-net"
+    },
+    {
+      "path": "/Home/Net/Drivers/PCNet.ZC",
+      "category": "explicitly_skipped",
+      "diagnostic": "not compiled: stock driver requires a legacy x86 PCI NIC; ARM64 target network path is VirtIO-net"
+    },
+    {
+      "path": "/Home/Net/Drivers/RTL8139.ZC",
+      "category": "explicitly_skipped",
+      "diagnostic": "not compiled: stock driver requires a legacy x86 PCI NIC; ARM64 target network path is VirtIO-net"
+    },
+    {
+      "path": "/Home/Net/Tests/PCNetTest.ZC",
+      "category": "explicitly_skipped",
+      "diagnostic": "not compiled: test calls PCNet driver symbols; the ARM64 target uses VirtIO-net"
+    },
+    {
+      "path": "/Home/Net/Utilities/JSON/JSON.ZC",
+      "category": "explicitly_skipped",
+      "diagnostic": "not compiled: upstream source depends on compiler-private LexExcept API not exposed by the ARM64 native compiler"
+    },
+    {
+      "path": "/Compiler/Asm.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/Asm.ZC:4:13 Expected ':' after label candidate 'LexExcept'."
+    },
+    {
+      "path": "/Compiler/AsmInit.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/AsmInit.ZC:64:18 Expected ':' after label candidate 'CInternalType'."
+    },
+    {
+      "path": "/Compiler/AsmLib.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/AsmLib.ZC:155:27 Unknown symbol 'IsLexExpression2Bin'."
+    },
+    {
+      "path": "/Compiler/AsmResolve.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/AsmResolve.ZC:32:14 Expected ':' after label candidate 'LexExcept'."
+    },
+    {
+      "path": "/Compiler/BackA.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/BackA.ZC:21:9 Expected ':' after label candidate 'ICMov'."
+    },
+    {
+      "path": "/Compiler/BackB.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/BackB.ZC:3:8 Expected ':' after label candidate 'ICMov'."
+    },
+    {
+      "path": "/Compiler/BackC.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/BackC.ZC:35:9 Expected ':' after label candidate 'ICMov'."
+    },
+    {
+      "path": "/Compiler/BackFA.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/BackFA.ZC:29:35 Unknown symbol 'intermediate_code_table'."
+    },
+    {
+      "path": "/Compiler/BackFB.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/BackFB.ZC:10:24 Expected ':' after label candidate 'CompSetFloatOpPushPop'."
+    },
+    {
+      "path": "/Compiler/BackLib.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/BackLib.ZC:67:71 Unknown symbol 'OptLag1'."
+    },
+    {
+      "path": "/Compiler/CExcept.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/CExcept.ZC:213:27 Unknown symbol 'IC_END_EXP'."
+    },
+    {
+      "path": "/Compiler/CExterns.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/Compiler/CExterns.ZC:18:48 Expected a type name."
+    },
+    {
+      "path": "/Compiler/CHash.ZC",
+      "category": "unbound_external",
+      "diagnostic": "ERR:/Compiler/CHash.ZC:30:40 AArch64 external data 'mem_boot_base' is not bound."
+    },
+    {
+      "path": "/Compiler/CInit.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/CInit.ZC:26:45 Expected ':' after label candidate 'CIntermediateStruct'."
+    },
+    {
+      "path": "/Compiler/CMain.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/CMain.ZC:10:11 Expected ':' after label candidate 'COCPush'."
+    },
+    {
+      "path": "/Compiler/CMisc.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/Compiler/CMisc.ZC:11:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/Compiler/Lex.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/Lex.ZC:175:14 Expected ':' after label candidate 'cmp'."
+    },
+    {
+      "path": "/Compiler/LexLib.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/LexLib.ZC:128:13 Expected ':' after label candidate 'LexExcept'."
+    },
+    {
+      "path": "/Compiler/OptLib.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/OptLib.ZC:23:26 Unknown symbol 'IC_NOP1'."
+    },
+    {
+      "path": "/Compiler/OptPass012.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/OptPass012.ZC:48:35 Unknown symbol 'intermediate_code_table'."
+    },
+    {
+      "path": "/Compiler/OptPass3.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/Compiler/OptPass3.ZC:1:36 Expected a type name."
+    },
+    {
+      "path": "/Compiler/OptPass4.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/OptPass4.ZC:6:33 Unknown symbol 'IC_IMM_I64'."
+    },
+    {
+      "path": "/Compiler/OptPass5.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/OptPass5.ZC:13:21 Unknown symbol 'IC_NOP2'."
+    },
+    {
+      "path": "/Compiler/OptPass6.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/OptPass6.ZC:5:33 Unknown symbol 'IC_IMM_I64'."
+    },
+    {
+      "path": "/Compiler/OptPass789A.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/Compiler/OptPass789A.ZC:1:41 Expected a type name."
+    },
+    {
+      "path": "/Compiler/ParseExp.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/ParseExp.ZC:22:15 Unknown symbol 'IC_ADD'."
+    },
+    {
+      "path": "/Compiler/ParseLib.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Compiler/ParseLib.ZC:26:27 Unknown symbol 'IC_DEREF'."
+    },
+    {
+      "path": "/Compiler/ParseStatement.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/ParseStatement.ZC:6:13 Expected ':' after label candidate 'LexExcept'."
+    },
+    {
+      "path": "/Compiler/ParseVar.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Compiler/ParseVar.ZC:17:14 Expected ':' after label candidate 'LexExcept'."
+    },
+    {
+      "path": "/Compiler/Templates.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/Compiler/Templates.ZC:1:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/Compiler/UAsm.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/Compiler/UAsm.ZC:34:18 Unknown symbol 'uasm'."
+    },
+    {
+      "path": "/Misc/Auto/AutoDistro.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/Auto/AutoDistro.ZC:20:13 Expected ':' after label candidate 'BootDVDIns'."
+    },
+    {
+      "path": "/Misc/Auto/AutoFullDistro0.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/Auto/AutoFullDistro0.ZC:22:13 Expected ':' after label candidate 'BootMHDIns'."
+    },
+    {
+      "path": "/Misc/Auto/AutoFullDistro1.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/Auto/AutoFullDistro1.ZC:22:13 Expected ':' after label candidate 'BootMHDIns'."
+    },
+    {
+      "path": "/Misc/Auto/AutoFullDistro2.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/Auto/AutoFullDistro2.ZC:22:13 Expected ':' after label candidate 'BootMHDIns'."
+    },
+    {
+      "path": "/Misc/Auto/AutoFullDistro3.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/Auto/AutoFullDistro3.ZC:26:12 Expected ':' after label candidate 'BootHDIns'."
+    },
+    {
+      "path": "/Misc/Auto/AutoFullDistro5.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/Misc/Auto/AutoFullDistro5.ZC:7:28 Unknown symbol 'LineRep'."
+    },
+    {
+      "path": "/Misc/Auto/AutoInstall.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/Auto/AutoInstall.ZC:66:10 Expected ':' after label candidate 'SATARep'."
+    },
+    {
+      "path": "/Misc/Auto/BootMHD2.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/Misc/Auto/BootMHD2.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/Misc/Auto/HomeSys.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/Misc/Auto/Once.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/Misc/DoDistro.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/DoDistro.ZC:19:13 Expected ':' after label candidate 'BootDVDIns'."
+    },
+    {
+      "path": "/Misc/OSInstall.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "WARN:LIMINE_HDD_FILE:1:30 TRACE LexErr at LIMINE_HDD_FILE:1:30: I can't find file '/Boot/Limine-BIOS-HDD.HH'."
+    },
+    {
+      "path": "/Misc/OSTestSuite.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/Misc/OSTestSuite.ZC:545:13 Expected ':' after label candidate 'InSetMouse'."
+    },
+    {
+      "path": "/System/AutoComplete/ACInit.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/AutoComplete/ACTask.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/AutoComplete/MakeAC.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/BlkDev/DiskCheck.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/BlkDev/MakeZBlkDev.ZC",
+      "category": "unbound_external",
+      "diagnostic": "ERR:/System/BlkDev/Mount.ZC:32:19 AArch64 external data 'dev' is not bound."
+    },
+    {
+      "path": "/System/BlkDev/Mount.ZC",
+      "category": "unbound_external",
+      "diagnostic": "ERR:/System/BlkDev/Mount.ZC:32:19 AArch64 external data 'dev' is not bound."
+    },
+    {
+      "path": "/System/Boot/BootDVD.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootDVD.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootDVDIns.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootDVD.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootHD.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootHD.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootHDIns.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootHD.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootMHD.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootMHD.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootMHD2.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootMHD2.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootMHDIns.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootMHD.ZC:6:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/BootRAM.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Boot/BootRAM.ZC:2:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Boot/DiskISO9660.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/System/Boot/DiskISO9660.ZC:26:20 Expected ':' after label candidate 'FillU16Palindrome'."
+    },
+    {
+      "path": "/System/Boot/DiskISORedSea.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Boot/DiskISORedSea.ZC:36:34 Unknown symbol 'BDVD_START'."
+    },
+    {
+      "path": "/System/Boot/LimineMHDIns.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "ERR:/System/Boot/LimineMHDIns.ZC:73:57 sizeof expression size is invalid."
+    },
+    {
+      "path": "/System/Ctrls/CtrlsA.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Ctrls/MakeCtrls.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Define.ZC",
+      "category": "unbound_external",
+      "diagnostic": "ERR:/System/Define.ZC:5:43 AArch64 external data 'mem_boot_base' is not bound."
+    },
+    {
+      "path": "/System/DevInfo.ZC",
+      "category": "unbound_external",
+      "diagnostic": "ERR:/System/DevInfo.ZC:9:19 AArch64 external data 'dev' is not bound."
+    },
+    {
+      "path": "/System/DolDoc/DocChar.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocClipBoard.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocCodeTools.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/DolDoc/DocCodeTools.ZC:84:36 Unknown symbol 'KW_ELSE'."
+    },
+    {
+      "path": "/System/DolDoc/DocEd.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocFile.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocFind.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocForm.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocGet.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocGr.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocLink.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocMacro.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocPlain.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocPutS.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocRecalc.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "ERR:/System/DolDoc/DocRecalc.ZC:331:12 Expected an expression before operator."
+    },
+    {
+      "path": "/System/DolDoc/DocRecalcLib.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocTerm.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocTree.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/DocWidgetWiz.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/DolDoc/MakeDoc.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "ERR:/System/DolDoc/DocRecalc.ZC:331:12 Expected an expression before operator."
+    },
+    {
+      "path": "/System/God/GodBible.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/God/GodDoodle.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "ERR:/System/God/GodDoodle.ZC:31:24 Class 'U8i' is missing member 'width'"
+    },
+    {
+      "path": "/System/God/GodSong.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/God/GodSong.ZC:102:21 Unknown symbol 'GodBitsRemove'."
+    },
+    {
+      "path": "/System/God/HolySpirit.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/God/HolySpirit.ZC:181:51 Unknown symbol 'ST_BIBLE_LINES'."
+    },
+    {
+      "path": "/System/God/MakeGod.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/God/HolySpirit.ZC:181:51 Unknown symbol 'ST_BIBLE_LINES'."
+    },
+    {
+      "path": "/System/Gr/GrAsm.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Gr/GrAsm.ZC:2:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Gr/GrComposites.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrDC.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrEnd.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrExterns.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrInitB.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrPalette.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrScreen.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/GrSpritePlot.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/System/Gr/GrSpritePlot.ZC:78:16 Expected ':' after label candidate 'GrTextBox3'."
+    },
+    {
+      "path": "/System/Gr/GrTextBase.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Gr/GrTextBase.ZC:4:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Gr/MakeGr.ZC",
+      "category": "assembler_unavailable",
+      "diagnostic": "ERR:/System/Gr/GrTextBase.ZC:4:5 Unknown symbol 'asm'."
+    },
+    {
+      "path": "/System/Gr/ScreenCast.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/SpriteBitMap.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Gr/SpriteBitMap.ZC:283:24 Unknown symbol 'SPE_ABORT'."
+    },
+    {
+      "path": "/System/Gr/SpriteCode.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Gr/SpriteCode.ZC:253:25 Unknown symbol 'LexFirstRemove'."
+    },
+    {
+      "path": "/System/Gr/SpriteEd.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Gr/SpriteEd.ZC:70:50 Unknown symbol 'SpriteElemQueuedBaseSize'."
+    },
+    {
+      "path": "/System/Gr/SpriteMain.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Gr/SpriteMain.ZC:71:38 Unknown symbol 'SpriteSideBar2SpriteQueue'."
+    },
+    {
+      "path": "/System/Gr/SpriteMesh.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/SpriteNew.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Gr/SpriteSideBar.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "WARN /System/Gr/SpriteSideBar.ZC:1:13 AIWN ignore's #help_index's ignored by the C side\r\ncompiler abort at third_party/aiwnios/c/arm_backend.c:3959\r\nzc: compile failed; current statement discarded\r\nca"
+    },
+    {
+      "path": "/System/Hash.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Hash.ZC:317:23 Unknown symbol 'HashEntrySize'."
+    },
+    {
+      "path": "/System/InFile.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/MakeSystem.ZC",
+      "category": "unbound_external",
+      "diagnostic": "ERR:/System/Math/MathODE.ZC:658:24 AArch64 external data 'winmgr' is not bound."
+    },
+    {
+      "path": "/System/Math/Conversion.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/System/Math/Conversion.ZC:27:12 Expected a type name."
+    },
+    {
+      "path": "/System/Math/F32.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/System/Math/F32.ZC:31:12 Expected a type name."
+    },
+    {
+      "path": "/System/Math/Mat4.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/System/Math/Mat4.ZC:8:28 Expected a type name."
+    },
+    {
+      "path": "/System/Math/Tests/TestF32.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/System/Math/Tests/TestF32.ZC:21:16 Expected ':' after label candidate 'CGLTex2D'."
+    },
+    {
+      "path": "/System/Math/Vec3.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/System/Math/Vec3.ZC:12:55 Expected a type name."
+    },
+    {
+      "path": "/System/Math/Vec4.ZC",
+      "category": "type_or_context",
+      "diagnostic": "ERR:/System/Math/Vec4.ZC:12:62 Expected a type name."
+    },
+    {
+      "path": "/System/Menu.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Mouse.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Registry.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/TaskSettings.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Utils/ConversionScript.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/System/Utils/ConversionScript.ZC:3:5 Expected ':' after label candidate 'FR'."
+    },
+    {
+      "path": "/System/Utils/DocUtils.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/System/Utils/DocUtils.ZC:22:9 Expected ':' after label candidate 'Touch'."
+    },
+    {
+      "path": "/System/Utils/LinkCheck.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Utils/MakeUtils.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Utils/MemRep.ZC:86:72 Unknown symbol 'DriveUnused'."
+    },
+    {
+      "path": "/System/Utils/MemRep.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Utils/MemRep.ZC:86:72 Unknown symbol 'DriveUnused'."
+    },
+    {
+      "path": "/System/Utils/Merge.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Utils/Merge.ZC:19:53 Unknown symbol 'DF_ABORT_ALL_FILES'."
+    },
+    {
+      "path": "/System/Utils/StrUtils.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Utils/SysRep.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Utils/TaskRep.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Utils/TaskRep.ZC:18:26 Unknown symbol 'TaskMemAlloced'."
+    },
+    {
+      "path": "/System/Utils/ToTXT.ZC",
+      "category": "compiler_arena_exhaustion",
+      "diagnostic": "Fresh guest: compiler data arena exhausted requesting 83117776 bytes while compiling switch cases."
+    },
+    {
+      "path": "/System/WallPaper.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/Win.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/WinMgr.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/System/ZSplash.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/HomeKeyPlugIns.ZC",
+      "category": "unresolved_name_or_context",
+      "diagnostic": "ERR:/HomeKeyPlugIns.ZC:129:17 Expected ':' after label candidate 'BootRAM'."
+    },
+    {
+      "path": "/HomeSys.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/HomeWrappers.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/HomeWrappers.ZC:10:14 Unknown symbol 'Find'."
+    },
+    {
+      "path": "/MakeHome.ZC",
+      "category": "unknown_symbol",
+      "diagnostic": "ERR:/System/Utils/MemRep.ZC:86:72 Unknown symbol 'DriveUnused'."
+    },
+    {
+      "path": "/Once.ZC",
+      "category": "compiles_in_fresh_session"
+    },
+    {
+      "path": "/StartOS.ZC",
+      "category": "other_diagnostic",
+      "diagnostic": "ERR:IC_BSF:2:1 Expected an intrinsic name after _intern."
+    }
+  ]
+}
