@@ -425,3 +425,8 @@ Bridge notes: [AIWNIOS.md](AIWNIOS.md). Milestone ladder: [upstream/README.md](u
 1. UTM: continue the remaining application compatibility work listed in PROGRAMS.md. Digital Logic's corrected-ISO retest on `9c5e90c9…` is accepted by user report. Doodle, Mass Spring and Life pass live checks in the preserved `3b59782c…` image. The current image passes expanded Logic, interactive-program, editor and ISO install/persistence gates; the broader graphics gates passed before the source-only prompt correction.
 2. Pi: extend the accepted native desktop/input milestone to source-program/editor workflows and writable save/reboot/reopen persistence; validate the new SDHCI write path on hardware, then complete normal RedSea integration, disconnect recovery and installation acceptance.
 3. HCRT host stubs only after IR gap shrinks; DT-based discovery before other ARM64 boards
+
+## License
+
+Original project contributions are available under the [MIT license](LICENSE).
+Third-party and adapted material retains its own terms; see [third-party notices](THIRD-PARTY-NOTICES.md).
