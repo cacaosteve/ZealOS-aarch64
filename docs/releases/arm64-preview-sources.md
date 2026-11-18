@@ -1,6 +1,6 @@
 # Source and provenance bundle
 
-These upstream snapshots are provided for review and distribution alongside the preview images. GitHub source archives omit Git submodule contents; the separate `edk2-*` dependency archives correspond to the first-level gitlinks in the pinned EDK2 tree. Recursive dependency completeness and exact overlay and patched-Limine provenance remain to be confirmed; see `third-party-notices.md`.
+These upstream snapshots are provided for review and distribution alongside the preview images. GitHub source archives omit Git submodule contents; the separate `edk2-*` dependency archives correspond to the first-level gitlinks in the pinned EDK2 tree. The included Linux source reproduces both overlays byte for byte, and Limine source plus the supplied patch reproduces the EFI executable byte for byte. Recursive dependency completeness and the missing Aiwnios copyright notice remain to be confirmed; see `third-party-notices.md`.
 
 - `pftf-rpi4-ab5d6c98.tar.gz`: https://github.com/pftf/RPi4/tree/ab5d6c98fcf9c38a95b11ea862e701d9c27d5653
 - `edk2-2970e569.tar.gz`: https://github.com/tianocore/edk2/tree/2970e5699ba6267f3384ffab20f96647578aebc8
@@ -24,4 +24,4 @@ These upstream snapshots are provided for review and distribution alongside the 
 - `edk2-googletest-86add134.tar.gz`: https://github.com/google/googletest/tree/86add13493e5c881d7e4ba77fb91c1f57752b3a4
 - `edk2-subhook-83d4e1eb.tar.gz`: https://github.com/tianocore/edk2-subhook/tree/83d4e1ebef3588fae48b69a7352cc21801cb70bc
 
-The project source archive `zealos-aarch64-4a94c231.tar.gz` is the image source commit. The Limine patch is the project patch applicable to the included upstream 12.9.0 source; its relationship to the staged binary has not been verified. `limine-12.9.0-stock-binaries.tar.gz` and the RPi4 ZIP are binary reference archives, not source.
+The project source archive `zealos-aarch64-4a94c231.tar.gz` is the image source commit. The Limine patch applied to the included upstream 12.9.0 source reproduces the staged EFI executable byte for byte with the recorded toolchain. `limine-12.9.0-stock-binaries.tar.gz` and the RPi4 ZIP are binary reference archives, not source.

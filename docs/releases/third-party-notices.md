@@ -29,16 +29,12 @@ The firmware release tag points to pftf/RPi4 commit
   Linux 6.1.28+. The source snapshot and license texts are included. The
   [firmware README](https://github.com/raspberrypi/firmware/blob/master/README.md)
   describes device-tree files as Linux-derived and GPL-licensed.
-- The `miniuart-bt.dtbo` and `upstream-pi4.dtbo` overlays match the above
-  firmware snapshot and also later snapshots. The v1.53 recipe fetched overlays
-  from `master`, so byte matches alone do **not** establish the exact source
-  revision used to produce those overlay binaries. For traceability the source
-  bundle includes the Linux revision above and the revisions recorded by two
-  later matching firmware snapshots: `89586905b8603e545cce9089a81f5f35d65bc998`
-  and `16f1da3c4e94437449d6aa151589ca0ad4b388bb`. The latter is the most recent
-  firmware commit's recorded Linux revision before the release build, but is
-  not proof of the overlay build's exact source. Confirm the build provenance
-  with the publisher before representing it as established.
+- Both `miniuart-bt.dtbo` and `upstream-pi4.dtbo` were independently rebuilt
+  from the Linux `4ce59edc8d949410d322873b35767e95a5ce5822` overlay source
+  with clang 23.1.5 and DTC 1.8.1; each resulting binary is byte-for-byte
+  identical to the v1.53 file. The upstream recipe used a moving branch, so
+  this proves a matching corresponding source, not the historical build SHA.
+  See `provenance-verification.log` and `scripts/verify-preview-third-party.py`.
 - `start4.elf` and `fixup4.dat` match Raspberry Pi firmware commit
   `eef9c230a0e70e23a54be98f90d5237ab6e0b0fd` and its earlier commit
   `3d301dd924bcd758a4c8cb19fe8531031f033f43`. The applicable Raspberry Pi
@@ -52,23 +48,26 @@ The firmware release tag points to pftf/RPi4 commit
 - The ZealOS source snapshot and Unlicense text are in `upstream/pinned` and
   `licenses/ZealOS.txt`. The project's ARM64 source snapshot is included in
   `sources/zealos-aarch64-4a94c231.tar.gz`.
-- Aiwnios code is pinned to commit `e155e87a4a4ddae4cd7f25685d9db8869fd45a40`;
-  the exact upstream BSD-3-Clause license and local changes are included in
-  the project source snapshot. The upstream license refers to an "above
-  copyright notice", but its pinned LICENSE has no such notice. Do not invent
-  an attribution; resolve the missing notice with upstream before representing
-  this package as a completed copyright-notice review.
+- Aiwnios code is pinned to commit `e155e87a4a4ddae4cd7f25685d9db8869fd45a40`.
+  Attribute the project to nrootconauto and contributors; the repository's
+  history records nrootconauto as author of the license's introduction in
+  commit `05cbed69dfe869cde1083662045f0625be666551`. The exact upstream
+  BSD-3-Clause text and our changes are included. The license referred to an
+  "above copyright notice" from its first commit, but none was included.
+  Historical authorship is not a verified substitute for an absent copyright
+  statement; clarification from the project or rights holders remains needed.
 - Limine 12.9.0 is included in both images. Its BSD-2-Clause license,
-  `3RDPARTY.md`, dependency license files, upstream source archive and the
-  repository's `limine-12.9.0-qemu-virt-pl011-hhdm.patch` accompany this
-  candidate. The staged `BOOTAA64.EFI` and `limine-uefi-cd.bin` differ from
-  the stock files in the local Limine binary archive. The patch applies to
-  the local 12.9.0 source, but a build matching these exact staged binaries has
-  not been established. Verify their build provenance and any other changes
-  before treating the included source and notices as complete for publication.
+  `3RDPARTY.md`, dependency licenses, upstream source archive and the
+  `limine-12.9.0-qemu-virt-pl011-hhdm.patch` accompany this candidate.
+  Building that source plus patch with Homebrew clang and LLD 23.1.5 produced
+  SHA-256 `3f51768c5eb8a0818b8e7aa2ac9a9caef3c64707b5b6db15d1e612de23236b8c`.
+  It matches the Pi EFI executable, the ISO's EFI executable and the sole EFI
+  executable embedded in its CD boot image byte for byte. A freshly generated
+  CD FAT image differs in its filesystem layout and timestamps; its executable
+  matches. The provenance check does not claim identical FAT image bytes.
 
 `SHA256SOURCES` records the staged source archive hashes. Source archive links,
 component revisions, and coverage limitations are listed in `SOURCES.md`.
 The checksums are integrity checks, not signatures. Do not publish the candidate
-until the remaining overlay, Aiwnios attribution, and Limine provenance questions
-have been resolved and the notices reviewed for the intended distribution.
+until the missing Aiwnios copyright attribution has been clarified and the notices
+have been reviewed for the intended distribution.
