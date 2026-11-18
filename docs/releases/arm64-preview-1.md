@@ -31,9 +31,10 @@ are rejected; the installer is intended for one target disk.
 Write the Pi image to a microSD card, insert it into a Pi 4B, connect a display,
 keyboard and mouse, and power it on. Writable SD storage is enabled at startup
 when its validation succeeds; no separate installer or `psdopen` is needed in
-the normal case. The previous Pi image passed a physical cold-reboot save test;
-the user also reported the latest image's Pi test was good. Exact individual
-steps of that latter report were not separately recorded.
+the normal case. A previous Pi image passed a physical cold-reboot save test. After the staged
+preview image and cold-reboot save test were recommended, the user reported
+that it worked. The flash and individual test steps were not independently
+observed.
 
 ## Tested and known limits
 

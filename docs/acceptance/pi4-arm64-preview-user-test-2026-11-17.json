@@ -1,0 +1,8 @@
+{
+  "artifact": "zealos-arm64-preview-1-pi4b.img",
+  "artifact_sha256": "f67137bedab3567f5feed11d6851d7d3155c2deb5f3d3986d5ff73606d6f902b",
+  "result": "user reported success",
+  "evidence": "After being advised to boot the staged image and verify that a saved file survives power-off and a cold boot, the user replied: yes it works.",
+  "scope_note": "The flash and individual test steps were not independently observed; the report is not a detailed test log.",
+  "source_commit": "4a94c23130cf78bb446618f037ce1306af820cde"
+}
