@@ -2,11 +2,11 @@
 
 ## Download the ARM64 preview
 
-**[Download ZealOS ARM64 Preview 1](https://github.com/cacaosteve/ZealOS-aarch64/releases/tag/v0.1.0-arm64-preview.1)** — no build required.
+**[Download ZealOS ARM64 Preview 2](https://github.com/cacaosteve/ZealOS-aarch64/releases/tag/v0.1.0-arm64-preview.2)** — no build required.
 
-- **UTM on Apple Silicon:** [Download the installer ISO](https://github.com/cacaosteve/ZealOS-aarch64/releases/download/v0.1.0-arm64-preview.1/zealos-arm64-preview-1-utm.iso). Boot it in an ARM64 VM with a blank VirtIO disk.
-- **Raspberry Pi 4B:** [Download the microSD image](https://github.com/cacaosteve/ZealOS-aarch64/releases/download/v0.1.0-arm64-preview.1/zealos-arm64-preview-1-pi4b.img). Write it to a microSD card; writing erases the card.
-- **Checksums, source, and instructions:** see the [release page](https://github.com/cacaosteve/ZealOS-aarch64/releases/tag/v0.1.0-arm64-preview.1) and its **Assets** section.
+- **UTM on Apple Silicon:** [Download the installer ISO](https://github.com/cacaosteve/ZealOS-aarch64/releases/download/v0.1.0-arm64-preview.2/zealos-arm64-preview-1-utm.iso). Boot it in an ARM64 VM with a blank VirtIO disk.
+- **Raspberry Pi 4B:** [Download the microSD image](https://github.com/cacaosteve/ZealOS-aarch64/releases/download/v0.1.0-arm64-preview.2/zealos-arm64-preview-1-pi4b.img). Write it to a microSD card; writing erases the card.
+- **Checksums, source, and instructions:** see the [release page](https://github.com/cacaosteve/ZealOS-aarch64/releases/tag/v0.1.0-arm64-preview.2) and its **Assets** section.
 
 This is an experimental preview. Back up files you want to keep.
 
