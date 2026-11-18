@@ -1,11 +1,17 @@
 # Native compiler and persistent modules in UTM
 
+> This is a milestone and historical integration record. References below to
+> a “current” build describe the build at the time of the relevant test, not
+> necessarily the published Preview 2 images. For the present scope, see the
+> [README](README.md) and [Pi storage status](docs/PI4-WRITABLE-STORAGE.md).
+
 This milestone replaces the **compiler bottleneck** for a separate native source
 session. It does not yet boot the complete upstream ZealOS system. The original
 `hc` / `runzc` / graphics / RedSea shell remains available for regression checks.
 The Pi diagnostic image does not link this runtime. The separate full Pi
 desktop image now does; its physical desktop/basic input milestone is accepted
-in [PI4.md](PI4.md), while Pi source writes remain disabled.
+in [PI4.md](PI4.md). The later Pi SD image supports bounded writes and
+automatic startup binding; see [Pi storage status](docs/PI4-WRITABLE-STORAGE.md).
 
 ## What is being integrated
 

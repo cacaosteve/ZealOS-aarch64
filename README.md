@@ -12,13 +12,18 @@ This is an experimental preview. Back up files you want to keep.
 
 Limine → ZealBooter → kernel + `demo.hcbc` → HolyC-IR JIT → graphical terminal → **native USB or VirtIO input**
 
-**Not a full ZealOS port yet.** QEMU/UTM has an accepted ARM64 ISO install,
-disk-only desktop boot and saved-data persistence milestone. Physical Pi 4B
-UEFI boots the native graphical terminals with working USB keyboard, pointer,
-menu clicks and `40+2;` returning `42`. The user has also confirmed Pi audio
+**A substantial but incomplete ZealOS ARM64 port.** This preview runs a
+ZealOS-derived desktop and programs on a custom ARM64 kernel and runtime, using
+an adapted Aiwnios compiler. It does not boot the original x86-64 ZealOS kernel
+or yet provide full application, hardware, or behavioral compatibility.
+
+QEMU/UTM has an accepted ARM64 ISO install, disk-only desktop boot and
+saved-data persistence milestone. Physical Pi 4B UEFI boots the native
+graphical terminals with working USB keyboard, pointer, menu clicks and `40+2;` returning `42`. The user has also confirmed Pi audio
 through HDMI and the headphone jack, though those listening tests were not tied
-to a recorded image hash. The current 1 GiB Pi SD image passed a physical
-editor save and cold-reopen test. See
+to a recorded image hash. A 1 GiB Pi SD image passed a physical editor save
+and cold-reopen test, and a later automatic-storage image passed a user-reported
+cold-reboot save test. See
 [ACCEPTANCE.md](ACCEPTANCE.md) and [PI4.md](PI4.md).
 
 ## AArch64 desktop in UTM
@@ -39,13 +44,13 @@ The splash screen, desktop, and Titanium running in UTM:
 
 ## Regular ZealOS programs
 
-The current ISO (`build/zealos-aarch64-hello.iso`, SHA-256
-`55719ef8…`) contains the pinned Apps and Demo sources. Source-catalog runs
-report all 70 pinned Apps files and all 206 Demo files compile in the ARM64
-guest. Runtime acceptance is broader but incomplete: 202 Demo sources have
-explicit runtime acceptance, four remain partial, and named-app testing still
-has feature and live-UTM gaps. The user has confirmed audible UTM output for
-`Beep(60);` and Psalmody on the current image. See
+The preview contains pinned Apps and Demo sources. A November 17 ARM64 QEMU
+source sweep reported all 70 pinned Apps files and all 206 Demo files compile
+in their tested contexts ([sweep record](docs/acceptance/utm-app-compiler-sweep-2026-11-17.json)).
+Compile success is not proof that every program works. A November 10 runtime
+ledger recorded 202 Demo sources accepted and four partial; named-app testing
+still has feature and live-UTM gaps. The user has confirmed audible UTM output for
+`Beep(60);` and Psalmody during UTM testing. See
 [PROGRAMS.md](PROGRAMS.md) for per-program evidence and remaining work.
 
 The Apps menu includes the tested upstream programs such as Digital Logic,
@@ -55,9 +60,9 @@ GrModels displays its generated model, and KeepAway accepts pointer input and
 returns cleanly with Escape. Other live-window reports remain open. Additional
 stock graphics programs including Doodle, Mass Spring and Game of Life have live
 UTM acceptance.
-Budget's full entry workflow was rerun on the exact current ISO: create, edit,
-abort, cancel, save, reopen, cold disk-only persistence, and return to a working
-terminal all pass with `zstatus failed=0`. The user also confirmed that launching
+Budget's full entry workflow was tested on an earlier recorded ISO (`55719ef8…`):
+create, edit, abort, cancel, save, reopen, cold disk-only persistence, and
+return to a working terminal all passed with `zstatus failed=0`. The user also confirmed that launching
 Budget in UTM and pressing Escape returns responsively to a terminal. Account-file
 editing and account selection remain unverified. See
 [`Budget current-image acceptance`](docs/acceptance/budget-current-55719-utm-qemu-2026-11-11.json).
@@ -145,8 +150,9 @@ validation remains open. The QEMU hub stress gate uses generic full-speed hub
 devices; physical high-speed TT routing is also pending. Pi's separate
 PCIe/VL805 backend has physical keyboard, basic trackpad and read-only FAT32
 USB-storage acceptance, including operation alongside its native desktop.
-Writable Pi storage and disconnect/reconnect recovery remain work
-([PI4.md](PI4.md)).
+The Pi SD image has bounded writable storage and user-reported cold-reboot
+persistence; USB storage remains read-only, and disconnect/reconnect recovery
+needs further work ([Pi storage status](docs/PI4-WRITABLE-STORAGE.md)).
 
 At the UTM prompt, run `zcheck`. Expected: `zc: upstream QuickSort + persistent
 modules OK`. Use `zc` for declarations/statements, `zload` for a source file in the
@@ -227,11 +233,14 @@ the persisted values and flushes.
 The UTM ISO automatically asks **Install onto hard drive (y or n)?**. Press
 **N** to try the live session or **Y** to open the installer. You can also open
 it later from **OS → Install ZealOS**. The guide displays the PCI VirtIO
-target and its capacity, then asks **Erase this disk and install ZealOS?**.
-Press **Y** to confirm or **N** to leave the disk unchanged.
+target and its capacity. If a compatible installation is detected, it offers
+**Upgrade the existing ZealOS installation**; otherwise, or if upgrade is
+declined, it asks **Erase this disk and install ZealOS?**. Upgrade preserves
+existing files, while confirming a fresh install erases the selected disk.
 The installer accepts a single PCI VirtIO target of **128 MiB or larger**;
 multiple attached VirtIO targets are rejected to avoid erasing an ambiguous disk.
-It displays write/read-back progress and verifies every sector after flushing.
+A fresh install displays progress and verifies writes after flushing; upgrades
+display their preparation and verification stages.
 After success, **Reboot Now** powers off the VM when you press **Y**. Detach
 the ISO in UTM, then start the VM from the installed disk. Press **N** to
 stay in the live session. The serial interface retains
@@ -258,8 +267,8 @@ devices. The user also confirmed installation, disk-only desktop boot and
 file persistence after restart in Apple Silicon UTM on 2026-11-13. This exact
 image has not been retested on Pi.
 
-For 128 MiB targets, the installer writes the packaged legacy image byte for
-byte. Larger targets retain the EFI partition and use the rest of the
+For 128 MiB fresh-install targets, the installer uses the packaged legacy
+layout. Larger targets retain the EFI partition and use the rest of the
 disk for a bounded ZealOS data partition, with RedSea followed by the two seeded
 32 MiB source banks (one active, one compaction shadow). Additional capacity is
 available for RedSea data; the source store remains 32 MiB. The current file provider supports files up to
@@ -413,18 +422,24 @@ FAT boot partition. See [the Pi 4B USB install steps](docs/PI4-WRITABLE-STORAGE.
 
 Bridge notes: [AIWNIOS.md](AIWNIOS.md). Milestone ladder: [upstream/README.md](upstream/README.md).
 
-## Tracks
+## Earlier track records
+
+The following entries describe the dated builds linked in each row; they are
+not claims about the exact Preview 2 images.
 
 | Track | Status |
 |--|--|
 | QEMU/UTM virt | The preserved `build/zealos-aarch64-logic-prompt-fix.iso` (`9c5e90c9…`) corrects Digital Logic's graphical prompt editing and fatal setup-abort path. Expanded NEC/VirtIO Logic, editor/save/reboot/reopen, Doodle/Mass Spring/Life and USB-CD install/persistence gates pass. The user confirmed the corrected-image live UTM retest works; its screenshot shows the expected AND circuit. The preserved `3b59782c…` image has live UTM acceptance for Doodle, Mass Spring and Life; `52c214c…` has live installer/desktop/persistence acceptance. See [ACCEPTANCE.md](ACCEPTANCE.md) and [PROGRAMS.md](PROGRAMS.md) for the remaining collection. |
 | Pi 4B UEFI | **Physical editor save and cold reboot passed on the 1 GiB SD image (2026-11-15).** Native desktop input, physical USB reads and headphone-jack/HDMI0 audio were previously user-confirmed. See [the physical editor persistence result](docs/acceptance/pi4-sd-editor-persistence-2026-11-15.json) and [the writable-storage status](docs/PI4-WRITABLE-STORAGE.md). |
 
-## Earlier platform follow-ups
+## Remaining platform work
 
-1. UTM: continue the remaining application compatibility work listed in PROGRAMS.md. Digital Logic's corrected-ISO retest on `9c5e90c9…` is accepted by user report. Doodle, Mass Spring and Life pass live checks in the preserved `3b59782c…` image. The current image passes expanded Logic, interactive-program, editor and ISO install/persistence gates; the broader graphics gates passed before the source-only prompt correction.
-2. Pi: extend the accepted native desktop/input milestone to source-program/editor workflows and writable save/reboot/reopen persistence; validate the new SDHCI write path on hardware, then complete normal RedSea integration, disconnect recovery and installation acceptance.
-3. HCRT host stubs only after IR gap shrinks; DT-based discovery before other ARM64 boards
+Since the earlier track records above, later tests established Pi SD startup
+and cold-reboot persistence and UTM directory-growth recovery;
+see [Pi storage status](docs/PI4-WRITABLE-STORAGE.md) and the
+[preview release notes](https://github.com/cacaosteve/ZealOS-aarch64/releases/tag/v0.1.0-arm64-preview.2)
+for the current acceptance boundary. Broader application compatibility, Pi
+hardware coverage, disconnect recovery and other ARM64 boards remain open.
 
 ## License
 

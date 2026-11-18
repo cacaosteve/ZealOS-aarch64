@@ -10,7 +10,7 @@ EFI commit record while borrowing the shared journal. A read-only UTM admission
 prototype checks recognized layouts and rejects pending upgrade state. The
 host-only `make check-redsea-growth-images` uses disposable 128 MiB and 1 GiB
 image copies and samples interruptions during writes and recovery; the 1 GiB
-fixture contains the user's preserved Hello.TXT and a prior EFI commit. These
+fixture contains the user's preserved Hello.TXT and a prior EFI commit.
 The UTM guest now uses these mechanisms for automatic directory growth. The
 installed system recovers a pending transaction before enabling disk writes,
 and the installer recovers it before using the shared EFI journal. Admission
@@ -33,7 +33,11 @@ See the [automatic SD persistence acceptance](acceptance/pi4-auto-sd-persistence
 The 2026-11-15 physical pass below used explicit `psdopen`. Older notes below
 refer to that previous opt-in build where they conflict with this result.
 
-## Current state
+## Earlier implementation snapshot
+
+The following section records the earlier opt-in storage milestone. Statements
+about startup binding and `psdopen` here are superseded by the automatic-startup
+result above; later physical and release evidence is linked there.
 
 - The Pi desktop build boots from the firmware-provided FAT boot volume and
   bundles the ZealOS source tree in `boot/sources.tar`.

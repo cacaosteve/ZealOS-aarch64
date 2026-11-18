@@ -1,14 +1,23 @@
 # Regular ZealOS programs on ARM64
 
+> This document is a dated test ledger. “Current” within an entry refers to
+> that entry’s recorded build, not necessarily the published Preview 2 images.
+> For a later QEMU application and compiler sweep, see the
+> [November 17 record](docs/acceptance/utm-app-compiler-sweep-2026-11-17.json);
+> for the latest manually reported Titanium exit check, see the
+> [UTM record](docs/acceptance/utm-titanium-user-test-2026-11-17.json).
+> Pi SD storage is now writable within the documented limits; see
+> [Pi storage status](docs/PI4-WRITABLE-STORAGE.md).
+
 The desktop, compiler and installer milestones do not establish that every
 regular ZealOS application works. Programs are imported from the same public
 ZealOS commit as the system sources:
 `eee210f4379ba3d00b47507f336a158eefb2c993`. Exact file hashes are recorded in
 `upstream/pinned/UPSTREAM.json` and verified by `make check-upstream`.
 
-## Latest current ISO compile inventories (2026-11-12)
+## ISO compile inventories (2026-11-12)
 
-The current working build is `build/zealos-aarch64-hello.iso`, SHA-256
+The recorded November 12 build was `build/zealos-aarch64-hello.iso`, SHA-256
 `22bec589e5018007f58c420a9e2ed352c1b3d521e5d14508489643ec90cc0560`, with
 kernel SHA-256 `cfa973611c0a6c90fd7f34050e192213b0aa5551a1523f5b4413c61ba45d8f12`.
 On this exact ISO, all 70 pinned `/Apps/**/*.ZC` sources compile in their
@@ -480,7 +489,7 @@ installer. Saving requires a writable installed VirtIO source volume.
 
 A separate [installer candidate](docs/acceptance/candidate-installer-utm-qemu-2026-11-09.json) includes the current document and popup fixes. It passed an automated USB-CD install, full disk read-back and disk-only persistence, plus the 3D gate using UTM's QEMU framework and `virtio-ramfb`. The Pi desktop kernel builds, but this candidate has not been tested in the live UTM UI or on the Pi.
 
-The matching [Pi desktop payload](docs/acceptance/pi-desktop-candidate-2026-11-10.json) was staged on the card earlier. A fresh payload from the current checkout now passes the boot-chain validator and full host platform suite, with 1,049 source modules bundled ([current build record](docs/acceptance/pi-desktop-current-build-2026-11-11.json)). This refresh was not copied to the card; the earlier physical keyboard, pointer and audio checks do not identify this new kernel hash. The Pi storage backend remains read-only.
+The matching [Pi desktop payload](docs/acceptance/pi-desktop-candidate-2026-11-10.json) was staged on the card earlier. A fresh payload from the current checkout now passes the boot-chain validator and full host platform suite, with 1,049 source modules bundled ([current build record](docs/acceptance/pi-desktop-current-build-2026-11-11.json)). This refresh was not copied to the card; the earlier physical keyboard, pointer and audio checks do not identify this new kernel hash. At the time of that record, the Pi storage backend was read-only; later Pi SD images support bounded writes.
 
 The follow-up [ToTheFront-fix candidate](docs/acceptance/tothefront-installer-utm-qemu-2026-11-09.json) includes the player-2 visibility correction in both its live bundle and installed disk. Its USB-CD installer, disk-only persistence and uninstrumented ToTheFront artillery workflow pass using UTM's QEMU engine. A matching Pi payload has been prepared, but neither candidate has been checked in live UTM UI or on physical Pi hardware.
 

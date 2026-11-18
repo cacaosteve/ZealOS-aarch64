@@ -1,5 +1,9 @@
 # Aiwnios reuse vs freestanding runtime
 
+> This document records the compiler integration as it evolved. Historical
+> “current” and not-yet-supported statements refer to their milestones; see
+> the [README](README.md) for the published preview’s present scope.
+
 ## Current decision (2026-09-26)
 
 **Import the compiler stack and keep the runtime freestanding.** The earlier

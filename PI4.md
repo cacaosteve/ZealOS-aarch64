@@ -1,5 +1,11 @@
 # Raspberry Pi 4B — UEFI bring-up track
 
+> This is a chronological bring-up record. Earlier statements about “current”
+> images, read-only storage or missing persistence refer to their dated
+> milestones, not necessarily Preview 2. For current SD behavior and test
+> scope, see [Pi writable storage](docs/PI4-WRITABLE-STORAGE.md) and the
+> [automatic SD persistence record](docs/acceptance/pi4-auto-sd-persistence-2026-11-17.json).
+
 **Decision:** use **Pi UEFI** ([pftf/RPi4](https://github.com/pftf/RPi4)), not native `kernel8.img`.
 
 That keeps the same chain as QEMU/UTM:
@@ -22,16 +28,17 @@ Native firmware+DTB is a fallback only if UEFI on the board is unusable.
 VirtIO transports do **not** apply to physical Pi devices. BCM2711 UART,
 GICv2, framebuffer, VL805 DMA, read-only USB storage and basic input now have
 physical evidence below, and the native desktop/basic input milestone is accepted.
-Native SD, writable persistence and Pi installation remain work.
+A later Pi SD image supports bounded writable persistence and passed a
+user-reported cold-reboot save test; broader filesystem and hardware coverage
+remain work.
 
-The current checkout adds an internal one-block USB BOT WRITE(10) transport
+An earlier checkout added an internal one-block USB BOT WRITE(10) transport
 path for a retained live xHCI session. `make check-pi4-xhci-dma` passes the
 bounded WRITE(10) CBW encoding checks, and the Pi desktop kernel compiles with
-the transfer path. This is only transport groundwork: the Pi filesystem and
-ZealC source writer still have no write callback, the path is not exposed as a
-shell command, and no physical write/read-back has been accepted. The Pi
-storage route therefore remains read-only until a mounted-volume writer,
-durability handling, and read-back verification are integrated.
+the transfer path. At that milestone the Pi filesystem and ZealC source writer
+had no write callback, and no physical write/read-back had been accepted.
+The USB-storage route remains read-only; it is separate from the later writable
+microSD backend.
 
 ## Boot-stage HDMI bars (PI-DIAG-1)
 
@@ -105,8 +112,8 @@ Raspberry Pi Imager and flashed onto a card at least 8 GiB. The builder reads
 the firmware source and writes only that output file; it never repartitions
 the inserted card. The data partition contains an empty stock-format RedSea
 volume and initialized source-bank headers. Bounded Pi SD reads/writes and
-explicit `psdopen` binding are implemented, but physical writes and persistence
-still need validation. `rspersist` only formats the small 128-sector bring-up
+automatic startup binding are implemented; physical cold-reboot persistence
+was subsequently reported as passing. `rspersist` only formats the small 128-sector bring-up
 volume; do not use it to initialize this full-size image. Existing ZEALPI cards
 are not resized in place.
 

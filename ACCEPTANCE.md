@@ -1,5 +1,10 @@
 # UTM acceptance (interactive) — **frozen virt regression bar (M33–M39)**
 
+> This file records historical milestones and test procedures. Names such as
+> “current,” “only one VM,” and image-specific claims refer to their test
+> context, not necessarily the published Preview 2. See the [README](README.md)
+> and dated `docs/acceptance/` records for the current release scope.
+
 The UTM/QEMU ARM64 bring-up is active again. The M33–M39 table remains the
 regression baseline; the desktop/startup/graphics and ISO-installer acceptance
 gates below are being closed as this goal proceeds.
