@@ -13,10 +13,19 @@ editor save and cold-reopen test. See
 
 ## AArch64 desktop in UTM
 
-The graphical desktop runs with two tiled terminals and the animated ZealOS
-splash logo:
+The splash screen, desktop, and Titanium running in UTM:
 
-![ZealOS AArch64 graphical desktop running in UTM](docs/images/zealos-aarch64-utm-desktop.png)
+**Splash screen**
+
+![ZealOS ARM64 splash screen in UTM](docs/images/zealos-arm64-utm-splash.png)
+
+**Desktop**
+
+![ZealOS ARM64 desktop in UTM](docs/images/zealos-arm64-utm-desktop.png)
+
+**Titanium**
+
+![Titanium running on ZealOS ARM64 in UTM](docs/images/zealos-arm64-utm-titanium.png)
 
 ## Regular ZealOS programs
 
