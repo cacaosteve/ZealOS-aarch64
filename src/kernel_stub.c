@@ -31,11 +31,38 @@
 #endif
 #if defined(ZEAL_FORCE_PI4) && !defined(ZEAL_PI_DIAG)
 #include "pi4_sdhci_card.h"
+#include "pi4_sd_install.h"
 #endif
 #include "virtio_kbd.h"
 #include "virtio_tablet.h"
 #include "virtio_blk.h"
 #include "block_device.h"
+#include "install_layout.h"
+#ifndef ZEAL_FORCE_PI4
+#include "upgrade_preflight.h"
+#include "upgrade_journal.h"
+#include "lz4_archive.h"
+#include "efi_fat32.h"
+#include "efi_fat32_read.h"
+#include "efi_source_tar.h"
+#include "source_upgrade_scan.h"
+#include "source_upgrade_stage.h"
+#include "source_upgrade_pending.h"
+#include "efi_fat32_reclaim.h"
+#include "efi_upgrade_owner.h"
+#include "efi_slot_manifest.h"
+#ifndef ZEAL_PI_DIAG
+#include "redsea_growth_utm_coordination.h"
+#include "redsea_growth_transaction.h"
+#endif
+/* Large aggregate initializers in the diagnostic journal code can cause
+ * clang to emit a freestanding memset call. */
+void *memset(void *dst, int value, size_t length) {
+    volatile uint8_t *p = (volatile uint8_t *)dst;
+    for (size_t i = 0; i < length; i++) p[i] = (uint8_t)value;
+    return dst;
+}
+#endif
 #include "virtio_net.h"
 #include "virtio_snd.h"
 #include "pi4_audio.h"
@@ -53,8 +80,12 @@ static int zc_delete_redsea(const char *path, int allow_directory);
 #if defined(ZEAL_FORCE_PI4) && !defined(ZEAL_PI_DIAG)
 static int zc_write_source(const char *path, const char *src, size_t len);
 #endif
-#if !defined(ZEAL_PI_DIAG) && !defined(ZEAL_FORCE_PI4)
+#ifndef ZEAL_PI_DIAG
 static int zc_enable_virtio_redsea_writes(void);
+#ifndef ZEAL_FORCE_PI4
+static int rsg_guest_grow(uint64_t base, uint64_t sectors, uint64_t maps, uint64_t *directory);
+static int rsg_guest_recover(void);
+#endif
 #endif
 
 int zc_virtio_keyboard_ready(void) { return virtio_kbd_ready(); }
@@ -824,6 +855,14 @@ static const struct zeal_handoff *g_kernel_handoff;
 static uint64_t g_timer_ticks;
 static const uint8_t *g_install_image;
 static uint64_t g_install_image_size;
+#ifndef ZEAL_FORCE_PI4
+static const uint8_t *g_upgrade_sources;
+static uint64_t g_upgrade_sources_size;
+static const uint8_t *g_upgrade_kernel, *g_upgrade_booter;
+static uint64_t g_upgrade_kernel_size, g_upgrade_booter_size;
+static const uint8_t *g_upgrade_new_tar;
+static uint64_t g_upgrade_new_tar_size;
+#endif
 __attribute__((aligned(64))) static uint8_t g_install_io[65536];
 
 uint64_t g_hc_mem[HC_IR_MEM_WORDS];
@@ -1155,10 +1194,16 @@ static void fb_text_present_cell(uint32_t col, uint32_t row, uint32_t packed) {
     unsigned char ch = (unsigned char)packed;
     if (!g_fb || col >= g_fb_cols || row >= g_fb_rows)
         return;
-    if (packed & (0x20000000u | 0x40000000u))
+    if (packed & 0x40000000u) /* ATTRF_SEL */
         colors ^= 0xffu;
-    fg = g_text_palette[colors & 15u];
-    bg = g_text_palette[(colors >> 4) & 15u];
+    if (packed & 0x20000000u) /* ATTRF_INVERT */
+        colors = (colors << 4 | colors >> 4) & 0xffu;
+    /* A desktop frame stores palette indices. Use its active colors so
+     * fb_putpixel recovers the original indices, including on Slate. */
+    const uint32_t *palette = g_fb_render_surface && g_graphics_palette_ready
+        ? g_graphics_palette : g_text_palette;
+    fg = palette[colors & 15u];
+    bg = palette[(colors >> 4) & 15u];
     fb_fillrect(col * 8u, row * 8u, 8u, 8u, bg);
     if (ch >= 32)
         fb_draw_char(col, row, (char)ch, fg);
@@ -1628,7 +1673,10 @@ uint64_t zeal_fb_task_text_write(unsigned slot, int64_t left, int64_t right,
             }
             continue;
         }
-        if (ch == '\b') {
+        const int backspace = ch == '\b';
+        if (backspace) {
+            if (!g_fb_task_text_x[slot] && !g_fb_task_text_y[slot])
+                continue;
             if (g_fb_task_text_x[slot])
                 g_fb_task_text_x[slot]--;
             else if (g_fb_task_text_y[slot]) {
@@ -1658,7 +1706,8 @@ uint64_t zeal_fb_task_text_write(unsigned slot, int64_t left, int64_t right,
         fb_text_present_cell((uint32_t)(left + g_fb_task_text_x[slot]),
                              (uint32_t)(top + g_fb_task_text_y[slot]), cell);
         g_zc_text_cells_drawn++;
-        g_fb_task_text_x[slot]++;
+        if (!backspace)
+            g_fb_task_text_x[slot]++;
         written++;
     }
     return written;
@@ -2567,8 +2616,8 @@ static void pi4_sdhci_card_diagnostic(void) {
     }
     con_puts("psdread: sectors=");
     zc_print_decimal(g_pi4_sdhci_card.sectors);
-    con_puts(" id-clock-hz=");
-    zc_print_decimal(g_pi4_sdhci_card.identification_clock_hz);
+    con_puts(" clock-hz=");
+    zc_print_decimal(g_pi4_sdhci_card.clock_hz);
     con_puts(" high-capacity=");
     zc_print_decimal(g_pi4_sdhci_card.high_capacity);
     con_puts("\n");
@@ -2614,6 +2663,35 @@ static void pi4_sdhci_card_diagnostic(void) {
              "psdread: ambiguous ZealOS data partition table\n");
 }
 
+static int pi4_sdhci_bind_data(void) {
+    const struct zeal_block_backend device = {
+        .max_sectors = 1,
+        .sectors = g_pi4_sdhci_card.sectors,
+        .device_sectors = g_pi4_sdhci_card.sectors,
+        .flush_supported = 1,
+        .read_abs = pi4_sdhci_backend_read,
+        .write_abs = pi4_sdhci_backend_write,
+        .flush = pi4_sdhci_backend_flush,
+    };
+    return zbd_discover_and_bind_data_partition(&device);
+}
+
+static void pi4_sdhci_enable_writers(void) {
+    if (zss_available())
+        zc_set_source_writer(zc_write_source);
+    else {
+        zc_set_source_writer(NULL);
+        con_puts("Pi SD: source banks unavailable; source writes disabled\n");
+    }
+    if (zc_enable_virtio_redsea_writes()) {
+        con_puts("Pi SD: full-size RedSea FileWrite enabled; successful writes flush before return\n");
+    } else {
+        zc_set_file_writer(NULL);
+        zc_set_file_deleter(NULL);
+        con_puts("Pi SD: writable RedSea volume not found; ordinary FileWrite remains disabled\n");
+    }
+}
+
 static void pi4_sdhci_card_open(void) {
     /* A new open attempt must explicitly re-enable writers after the card and
      * its partition have both been validated. */
@@ -2627,29 +2705,18 @@ static void pi4_sdhci_card_open(void) {
         con_puts("; disk backend unchanged\n");
         return;
     }
-    if (pi4_sdhci_card_flush(&g_pi4_sdhci_card) != 0) {
-        con_puts("psdopen: card did not reach ready/transfer state; disk backend unchanged\n");
+    uint32_t present;
+    if (!pi4_sdhci_card_read32(&g_pi4_sdhci_context, PI4_SDHCI_CARD_REG_PRESENT_STATE, &present) ||
+        !(present & PI4_SDHCI_CARD_PRESENT_WRITE_ENABLED) ||
+        pi4_sdhci_card_flush(&g_pi4_sdhci_card) != 0) {
+        con_puts("psdopen: card unavailable or write-protected; disk backend unchanged\n");
         return;
     }
-    const struct zeal_block_backend device = {
-        .max_sectors = 1,
-        .sectors = g_pi4_sdhci_card.sectors,
-        .device_sectors = g_pi4_sdhci_card.sectors,
-        .flush_supported = 1,
-        .read_abs = pi4_sdhci_backend_read,
-        .write_abs = pi4_sdhci_backend_write,
-        .flush = pi4_sdhci_backend_flush,
-    };
-    if (!zbd_discover_and_bind_data_partition(&device)) {
+    if (!pi4_sdhci_bind_data()) {
         con_puts("psdopen: no unique, valid ZealOS data partition; disk backend unchanged\n");
         return;
     }
-#if defined(ZEAL_FORCE_PI4) && !defined(ZEAL_PI_DIAG)
-    /* Only an explicit psdopen enables writes. Source code stays in the
-     * append-only banks; ordinary FileWrite uses the bounded RedSea area. */
-    zc_set_source_writer(zc_write_source);
-    con_puts("psdopen: persistent source/data writes enabled in the ZealOS partition\n");
-#endif
+    pi4_sdhci_enable_writers();
     con_puts("psdopen: data partition bound; writes are limited to its RedSea and source banks\n");
     con_puts("psdopen: RedSea sectors=");
     zc_print_decimal(g_zbd.redsea_sectors);
@@ -2659,17 +2726,6 @@ static void pi4_sdhci_card_open(void) {
         con_puts(" ready\n");
     } else {
         con_puts(" source banks uninitialized\n");
-    }
-    uint64_t redsea_base = 0, redsea_sectors = 0;
-    if (zc_raw_redsea_geometry(&redsea_base, &redsea_sectors) &&
-        redsea_base == 0 && redsea_sectors > 128) {
-        zc_set_file_writer(zc_write_redsea);
-        zc_set_file_deleter(zc_delete_redsea);
-        con_puts("psdopen: full-size RedSea FileWrite enabled; successful writes flush before return\n");
-    } else {
-        zc_set_file_writer(NULL);
-        zc_set_file_deleter(NULL);
-        con_puts("psdopen: writable RedSea volume not found; ordinary FileWrite remains disabled\n");
     }
 }
 #endif
@@ -3625,6 +3681,13 @@ static int pi4_xhci_dma_port_slot_type(volatile uint8_t *bar,
         unsigned root_port, unsigned max_ports, unsigned *protocol_major,
         unsigned *slot_type, unsigned *cap_offset);
 
+#ifndef ZEAL_PI_DIAG
+static int pi4_usb_installer_boot(void) {
+    return g_install_image && g_install_image_size == 8 &&
+           zss_eq(g_install_image, "ZPIINST1", 8);
+}
+#endif
+
 /*
  * Controller HCRST can leave connected root ports disabled. Starting with all
  * ports disabled may stop MFINDEX, so exercise the event ring with a bounded
@@ -3673,8 +3736,22 @@ static int pi4_xhci_dma_port_reset_event_probe(
             if (!scan) g_pi4_xhci_dma_root_initial[i] = portsc;
         }
         g_pi4_xhci_dma_root_scans = scan + 1u;
-        port = pi4_xhci_dma_select_root_port(g_pi4_xhci_dma_root_portsc,
-            g_pi4_xhci_dma_root_protocol, total_ports);
+#ifndef ZEAL_PI_DIAG
+        if (pi4_usb_installer_boot()) {
+            /* The boot stick may be on SuperSpeed. Start the USB2 hub
+             * that carries the keyboard and pointer. */
+            const uint32_t required = PI4_XHCI_PORTSC_CCS | PI4_XHCI_PORTSC_PP;
+            for (unsigned i = 0; i < total_ports; i++)
+                if (g_pi4_xhci_dma_root_protocol[i] == 2u &&
+                    (g_pi4_xhci_dma_root_portsc[i] & required) == required) {
+                    port = i + 1;
+                    break;
+                }
+            if (port) break;
+        } else
+#endif
+            port = pi4_xhci_dma_select_root_port(g_pi4_xhci_dma_root_portsc,
+                g_pi4_xhci_dma_root_protocol, total_ports);
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
         if (frequency && now - start <= UINT64_MAX / 1000u)
             g_pi4_xhci_dma_root_wait_ms =
@@ -13691,7 +13768,7 @@ static int rs_stock_root_read(const char *name, char *dst, size_t cap,
             name++;
             continue;
         }
-        if ((attr & 0x10u) || length > 65536 ||
+        if ((attr & 0x10u) || length > ZSS_MAX_FILE ||
             (length && (first < base || first - base >= sectors ||
              (length + 511) / 512 > sectors - (first - base)))) return -1;
         if (out_len) *out_len = (size_t)length;
@@ -13807,7 +13884,7 @@ static int rs_stock_file_at(uint64_t base, uint64_t sectors, uint64_t directory,
                 struct zss_entry native;
                 int status = zss_find(path, &native, NULL, NULL);
                 if (status == 1 || status == -3 || status == -1 ||
-                    length > 65536 || (length && (first < base ||
+                    length > ZSS_MAX_FILE || (length && (first < base ||
                     first - base >= sectors || (length + 511) / 512 >
                     sectors - (first - base)))) continue;
                 if ((*index)--) continue;
@@ -13826,9 +13903,19 @@ static int rs_stock_file_at(uint64_t base, uint64_t sectors, uint64_t directory,
 static int zc_read_redsea(const char *name, char *dst, size_t cap, size_t *out_len) {
     struct zss_entry entry;
     int found = zss_find(name, &entry, NULL, NULL);
-    if (found == 1) return zss_read(&entry, dst, cap, out_len);
     if (found == -3) return -3; /* Native tombstone masks the bundled archive. */
     if (found == -1) return -1;
+    /* Ordinary FileWrite saves non-ZC files on RedSea. Prefer that copy to
+     * the packaged source-bank version, so includes see edited headers. ZC
+     * source itself is written through the source bank and keeps its existing
+     * precedence. */
+    size_t name_len = str_len(name);
+    int source_zc = name_len >= 3 && name[name_len - 3] == '.' &&
+                    (name[name_len - 2] == 'Z' || name[name_len - 2] == 'z') &&
+                    (name[name_len - 1] == 'C' || name[name_len - 1] == 'c');
+    if (!source_zc && rs_stock_root_read(name, dst, cap, out_len) == 0)
+        return 0;
+    if (found == 1) return zss_read(&entry, dst, cap, out_len);
     /* The old eight-entry RedSea catalog stays readable during migration. */
     uint64_t len = 0;
     if (!zbd_ready())
@@ -14182,7 +14269,8 @@ static int rs_stock_dir_slot(uint64_t base, uint64_t sectors,
             return 1;
         }
     }
-    if (empty_slot == UINT64_MAX || empty_slot >= slots) return 0;
+    if (empty_slot == UINT64_MAX) return -1; /* full, not corrupt */
+    if (empty_slot >= slots) return 0;
     *slot_index = empty_slot;
     *found = 0;
     return 1;
@@ -14259,9 +14347,14 @@ static int64_t zc_write_redsea(const char *path, const char *src, size_t len,
     }
     if (!rs_stock_resolve_parent(base, sectors, entry_path, &parent, leaf))
         return -1;
-    if (!rs_stock_dir_slot(base, sectors, parent, leaf, &slot, &found,
-                           &old_first, &old_length, &old_attr))
-        return -1;
+    int slot_status = rs_stock_dir_slot(base, sectors, parent, leaf, &slot, &found,
+                                         &old_first, &old_length, &old_attr);
+#ifndef ZEAL_FORCE_PI4
+    if (slot_status == -1 && rsg_guest_grow(base, sectors, bitmap_sectors, &parent))
+        slot_status = rs_stock_dir_slot(base, sectors, parent, leaf, &slot, &found,
+                                        &old_first, &old_length, &old_attr);
+#endif
+    if (slot_status != 1) return -1;
     if (make_directory && found) return -1;
     if ((attributes & 0x10u) && (!len || (len & 511u) || len < 512))
         return -1;
@@ -14358,8 +14451,8 @@ static int zc_delete_redsea(const char *path, int allow_directory) {
     if (!bitmap_sectors || bitmap_sectors >= sectors ||
         bitmap_sectors < (sectors + 4095) / 4096 ||
         !rs_stock_resolve_parent(base, sectors, path, &parent, leaf) ||
-        !rs_stock_dir_slot(base, sectors, parent, leaf, &slot, &found,
-                           &old_first, &old_length, &old_attr) || !found)
+        rs_stock_dir_slot(base, sectors, parent, leaf, &slot, &found,
+                          &old_first, &old_length, &old_attr) != 1 || !found)
         return -1;
     int is_directory = !!(old_attr & 0x10u);
     if (is_directory != !!allow_directory) return -1;
@@ -14447,10 +14540,8 @@ static int zc_delete_redsea(const char *path, int allow_directory) {
     return 0;
 }
 
-#if !defined(ZEAL_PI_DIAG) && !defined(ZEAL_FORCE_PI4)
-/* UTM's writable VirtIO target may expose stock RedSea. Enable the normal
- * FileWrite/FileDel callbacks only after validating its stock root and bitmap.
- * Pi stays opt-in through psdopen after the physical SD partition is checked. */
+#ifndef ZEAL_PI_DIAG
+/* Enable FileWrite/FileDel only after validating the stock root and bitmap. */
 static int zc_enable_virtio_redsea_writes(void) {
     uint8_t boot[512];
     uint64_t base, sectors, root, bitmap_sectors, dot_first, dot_length;
@@ -15477,6 +15568,9 @@ static void zss_shell_list(void) {
                               "zls: damaged source catalog\n");
         return;
     }
+    /* Keep physical record order and use the existing index for the latest
+     * record lookup. The fallback still handles logs larger than the index. */
+    int indexed = zss_catalog_build() == 1;
     for (uint32_t pos = 1; pos < tail;) {
         struct zss_entry entry, latest;
         char name[ZSS_MAX_NAME + 1];
@@ -15487,7 +15581,19 @@ static void zss_shell_list(void) {
         }
         pos += 1u + entry.blocks;
         if (deleted) continue;
-        int current = zss_find(name, &latest, NULL, NULL);
+        int current = 0;
+        if (indexed) {
+            for (uint32_t i = 0; i < g_zss_catalog_count; i++) {
+                const struct zss_catalog_item *item = &g_zss_catalog[i];
+                if (zss_str_eq(item->name, name)) {
+                    latest = item->entry;
+                    current = item->status;
+                    break;
+                }
+            }
+        } else {
+            current = zss_find(name, &latest, NULL, NULL);
+        }
         if (current == 1 && latest.header_sector == entry.header_sector) {
             con_puts(name); con_puts(" bytes=");
             zc_print_decimal(entry.length); con_puts("\n");
@@ -15524,6 +15630,80 @@ int zeal_zss_volume_stats(uint64_t *capacity_bytes, uint64_t *free_bytes) {
 }
 uint64_t zeal_zss_catalog_revision(void) { return 0; }
 int zeal_zss_writable(void) { return 0; }
+#endif
+
+#if defined(ZEAL_FORCE_PI4) && !defined(ZEAL_PI_DIAG)
+static const void *pi4_installed_sources(uint64_t *size) {
+    static uint8_t archive[PI4_INSTALL_ARCHIVE_MAX] __attribute__((aligned(16)));
+    uint8_t boot[512];
+    uint64_t base, sectors, first, length;
+    uint16_t attributes;
+    if (pi4_usb_installer_boot() || !zbd_ready())
+        return NULL;
+    if (!zc_raw_redsea_geometry(&base, &sectors) || base != 0 ||
+        !zbd_read_volume(boot, 0, 1) ||
+        !rs_stock_find(base, sectors, rs_stock_u64(boot + 24),
+                       PI4_INSTALL_ARCHIVE, &first, &length, &attributes) ||
+        (attributes & 0x410u) != 0x400u || !length || length > sizeof(archive) ||
+        first >= sectors || (length + 511u) / 512u > sectors - first ||
+        !zbd_read_volume(archive, first, (uint32_t)((length + 511u) / 512u))) {
+        return NULL;
+    }
+    *size = length;
+    return archive;
+}
+
+static void pi4_sd_install_handle(const char *args) {
+    const struct zeal_handoff *h = g_kernel_handoff;
+    if (!pi4_usb_installer_boot()) {
+        con_puts("zinstall: boot the Pi 4B USB installer image\n");
+        return;
+    }
+    if (zbd_ready()) {
+        con_puts("zinstall: reboot the live USB before installing to an open SD card\n");
+        return;
+    }
+    int rc = pi4_sdhci_card_ensure_ready();
+    if (rc) {
+        con_puts("zinstall: SD initialization failed rc=-");
+        zc_print_decimal((uint64_t)(-rc));
+        con_puts("; run psdread for diagnostics\n");
+        return;
+    }
+    if (!pi4_sdhci_bind_data()) {
+        con_puts("zinstall: need one valid ZealOS data partition on the SD card\n");
+        return;
+    }
+    uint32_t present;
+    if (!h->sources_virt || !pi4_sd_install_fits(h->sources_size) ||
+        !pi4_sdhci_card_read32(&g_pi4_sdhci_context, PI4_SDHCI_CARD_REG_PRESENT_STATE,
+                              &present) ||
+        !(present & PI4_SDHCI_CARD_PRESENT_WRITE_ENABLED) || !zbd_flush()) {
+        g_zbd.ready = 0;
+        con_puts("zinstall: archive invalid, or SD is unavailable, write-protected or too small\n");
+        return;
+    }
+    con_puts("zinstall: SD data partition at LBA ");
+    zc_print_decimal(g_zbd.lba_offset);
+    con_puts(", sectors ");
+    zc_print_decimal(g_zbd.sectors);
+    con_puts("\n");
+    if (!streq(args, "ERASE SD")) {
+        g_zbd.ready = 0;
+        con_puts("This replaces files in that partition. Type zinstall ERASE SD to confirm.\n");
+        return;
+    }
+    con_puts("zinstall: writing and verifying SD data; this may take a few minutes\n");
+    uint64_t id;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(id));
+    int installed = pi4_sd_install((const uint8_t *)(uintptr_t)h->sources_virt,
+                                   h->sources_size, id);
+    g_zbd.ready = 0;
+    if (installed)
+        con_puts("zinstall: SD data verified. Power off, remove USB, and boot from SD.\n");
+    else
+        con_puts("zinstall: SD I/O failed; data partition may be incomplete. Cold boot before retrying.\n");
+}
 #endif
 
 #ifndef ZEAL_PI_DIAG
@@ -15578,9 +15758,864 @@ static int zinstall_image_valid(uint64_t *sectors_out, uint32_t *extents_out,
     return 1;
 }
 
+/* Read a sector from the validated sparse template, including zero gaps.
+ * The cached cursor makes sequential installation O(sectors + extents). */
+static int zinstall_template_sector(void *context, uint64_t lba, uint8_t *out) {
+    (void)context;
+    static uint32_t index;
+    static uint64_t offset, previous;
+    uint32_t count = zinstall_u32(g_install_image + 24);
+    if (!offset || lba < previous) { index = 0; offset = 40ull + count * 16ull; }
+    previous = lba;
+    zi_zero(out, 512);
+    while (index < count) {
+        const uint8_t *entry = g_install_image + 40ull + index * 16ull;
+        uint64_t first = zinstall_u64(entry);
+        uint32_t n = zinstall_u32(entry + 8);
+        if (lba < first) return 1;
+        if (lba < first + n) {
+            zi_copy(out, g_install_image + offset + (lba - first) * 512, 512);
+            return 1;
+        }
+        offset += (uint64_t)n * 512; index++;
+    }
+    return lba < ZEAL_DISK_SECTS;
+}
+
+static struct {
+    struct zi_layout layout;
+    uint64_t sector, report;
+    uint32_t batch;
+    unsigned pass;
+    int active;
+} g_install_job;
+
+static int zinstall_job_begin(uint64_t capacity, uint32_t batch) {
+    if (g_install_job.active || !batch || batch > sizeof(g_install_io) / 512 ||
+        !zi_layout_init(&g_install_job.layout, capacity, zinstall_template_sector, 0))
+        return 0;
+    g_install_job.sector = g_install_job.report = 0;
+    g_install_job.batch = batch;
+    g_install_job.pass = 0;
+    g_install_job.active = 1;
+    /* Live applications must not write through a previously mounted target
+     * while it is being replaced. ISO sources remain available in memory. */
+    g_zbd.ready = 0;
+    return 1;
+}
+
+/* A bounded step returns to the source GUI between chunks, so the desktop can
+ * draw progress and service input without entering guest code inside disk I/O. */
+static int zinstall_job_step(void) {
+    static uint8_t expected[sizeof(g_install_io)] __attribute__((aligned(64)));
+    uint64_t capacity = g_install_job.layout.sectors;
+    if (!g_install_job.active) return -1;
+    uint64_t end = g_install_job.sector + 8192; /* at most 4 MiB per UI turn */
+    if (end > capacity) end = capacity;
+    while (g_install_job.sector < end) {
+        uint64_t sector = g_install_job.sector;
+        uint32_t batch = end - sector > g_install_job.batch ? g_install_job.batch :
+                         (uint32_t)(end - sector);
+        for (uint32_t i = 0; i < batch; i++)
+            if (!zi_layout_sector(&g_install_job.layout, sector + i, expected + i * 512)) goto failed;
+        if (!g_install_job.pass) {
+            if (!virtio_blk_write_abs_many(expected, sector, batch)) goto failed;
+        } else {
+            if (!virtio_blk_read_abs_many(g_install_io, sector, batch)) goto failed;
+            for (uint32_t i = 0; i < batch * 512; i++)
+                if (g_install_io[i] != expected[i]) goto failed;
+        }
+        g_install_job.sector += batch;
+    }
+    if (end >= g_install_job.report || end == capacity) {
+        con_puts(g_install_job.pass ? "zinstall: verified " : "zinstall: wrote ");
+        zc_print_decimal(end * 100 / capacity); con_puts("%\n");
+        g_install_job.report = end + capacity / 8;
+    }
+    if (end == capacity) {
+        if (!virtio_blk_flush_disk()) goto failed;
+        if (++g_install_job.pass == 2) {
+            g_install_job.active = 0;
+            con_puts("zinstall: installed and fully read-back verified. Shut down, detach "
+                     "the ISO, then boot from the target disk.\n");
+            return 1;
+        }
+        g_install_job.sector = g_install_job.report = 0;
+    }
+    return 0;
+failed:
+    g_install_job.active = 0;
+    con_puts("zinstall: image write/read-back/flush failed; target incomplete\n");
+    return -1;
+}
+
+#ifndef ZEAL_FORCE_PI4
+static int zupgrade_read_target(void *context, uint64_t sector, uint8_t out[512]) {
+    (void)context;
+    return virtio_blk_read_abs(out, sector);
+}
+#ifdef ZEAL_UPGRADE_DIAG
+static uint64_t g_upgrade_fault_write, g_upgrade_fault_count;
+static int g_upgrade_switch_fault;
+static int g_upgrade_marker_fault;
+static int g_upgrade_manifest_fault;
+#endif
+static int zupgrade_recovery_write(void *context, uint64_t sector, const uint8_t in[512]) {
+    (void)context;
+#ifdef ZEAL_UPGRADE_DIAG
+    if (g_upgrade_fault_write && ++g_upgrade_fault_count == g_upgrade_fault_write) return 0;
+#endif
+    return virtio_blk_write_abs(in, sector);
+}
+static int zupgrade_recovery_flush(void *context) {
+    (void)context; return virtio_blk_flush_disk();
+}
+#ifndef ZEAL_PI_DIAG
+/* Directory recovery is checked before EFI recovery and before the installed
+ * filesystem is bound. It only recognizes the exact supported GPT layouts. */
+static int rsg_guest_resolve(struct zu_journal *j) {
+    struct zeal_upgrade_target target;
+    struct zu_commit_io io = {NULL,zupgrade_read_target,zupgrade_recovery_write,
+                              zupgrade_recovery_flush,virtio_blk_full_capacity(),34};
+    if (g_vb_pci_disk_count != 1 ||
+        !zeal_upgrade_preflight(io.read,io.context,io.capacity,&target)) return 0;
+    uint64_t first = target.legacy ? ZEAL_RS_LBA_BASE : target.data_first;
+    uint64_t count = target.legacy ? ZEAL_RS_SECTS : target.bank_a-target.data_first;
+    if (!count || first >= io.capacity || count > io.capacity-first) return 0;
+    *j = (struct zu_journal){io,first,first+count,ZU_JOURNAL_MAX_SLOTS,0};
+    return 1;
+}
+static int rsg_guest_recover(void) {
+    struct zu_journal j; uint8_t a[512],b[512];
+    if (g_vb.xport != VB_XPORT_PCI) return 1; /* legacy MMIO has no shared gap */
+    if (g_vb_pci_disk_count != 1) {
+        uart_puts(g_uart,"RedSea: ambiguous PCI disks; recovery and mount refused\n");
+        return 0;
+    }
+    if (virtio_blk_full_capacity() <= RSG_SHARED_SHADOW) return 1;
+    if (!zupgrade_read_target(NULL,RSG_SHARED_PRIMARY,a) ||
+        !zupgrade_read_target(NULL,RSG_SHARED_SHADOW,b)) return 0;
+    if (zu_empty(a) && zu_empty(b)) return 1;
+    /* A present recovery marker must never be ignored just because a damaged
+     * installation cannot pass the layout preflight. Avoid touching unknown
+     * media; keep the filesystem unmounted until its identity is established. */
+    if (!rsg_guest_resolve(&j)) {
+        uart_puts(g_uart,"RedSea: recovery marker on unrecognized disk; not mounted\n");
+        return 0;
+    }
+    if (!rsg_shared_recover(&j)) {
+        uart_puts(g_uart,"RedSea: directory recovery failed; disk not mounted\n");
+        return 0;
+    }
+    uart_puts(g_uart,"RedSea: directory recovery completed\n");
+    return 1;
+}
+static int rsg_parent_slot(uint64_t base,uint64_t sectors,uint64_t directory,
+                           uint64_t *entry_sector,unsigned *entry_offset) {
+    uint8_t block[512],head[512];
+    if (!rs_stock_volume_read(base,sectors,directory,head,1)) return 0;
+    uint64_t root_parent=rs_stock_u64(head+104), root=rs_stock_u64(head+40);
+    if (root!=directory || root_parent==directory ||
+        !rs_stock_volume_read(base,sectors,root_parent,head,1) ||
+        rs_stock_u64(head+40)!=root_parent) return 0;
+    uint64_t length=rs_stock_u64(head+48); unsigned matches=0;
+    if (!length || (length&511) || root_parent<base || root_parent-base>=sectors ||
+        length/512>sectors-(root_parent-base)) return 0;
+    for(uint64_t n=0;n<length/512;n++) {
+        if(!rs_stock_volume_read(base,sectors,root_parent+n,block,1))return 0;
+        for(unsigned k=0;k<8;k++) {
+            uint8_t *e=block+64*k; uint16_t a=(uint16_t)e[0]|((uint16_t)e[1]<<8);
+            if(!e[2])goto done;
+            if((a&0x100u)||!(a&0x10u)||(n==0&&k<2))continue;
+            if(rs_stock_u64(e+40)==directory) {matches++;*entry_sector=root_parent+n;*entry_offset=64*k;}
+        }
+    }
+done:
+    return matches==1;
+}
+static int rsg_guest_grow(uint64_t base,uint64_t sectors,uint64_t maps,uint64_t *directory) {
+    static struct rsg_ownership owner;
+    struct zu_journal j; struct zu_commit_io io={NULL,zupgrade_read_target,
+        zupgrade_recovery_write,zupgrade_recovery_flush,virtio_blk_full_capacity(),34};
+    uint8_t head[512],boot[512]; uint64_t fresh,entry_sector; unsigned entry_offset=0;
+    if(!directory || !zbd_ready() || !g_zbd.flush_supported ||
+       !rsg_utm_admit(io,&j) || base>UINT64_MAX-g_zbd.lba_offset ||
+       j.allowed_first!=base+g_zbd.lba_offset || j.allowed_end-j.allowed_first!=sectors ||
+       !rs_stock_volume_read(base,sectors,*directory,head,1) ||
+       !rs_stock_volume_read(base,sectors,base,boot,1)) return 0;
+    uint64_t length=rs_stock_u64(head+48), old=*directory;
+    if (!length || (length&511) || length>UINT64_MAX/2 ||
+        !rs_stock_find_extent(base,sectors,maps,2*(length/512),&fresh)) return 0;
+    if (rs_stock_u64(boot+24)==old) entry_sector=base;
+    else if(!rsg_parent_slot(base,sectors,old,&entry_sector,&entry_offset))return 0;
+    if (!rsg_ownership_check(&j,j.allowed_first,sectors,maps,g_zbd.lba_offset,&owner))return 0;
+    int started=rsg_shared_begin(&j),grown=0,committed=0;
+    if(started) grown=rsg_grow(&j,j.allowed_first,sectors,maps,g_zbd.lba_offset,
+                               old+g_zbd.lba_offset,fresh+g_zbd.lba_offset,
+                               entry_sector+g_zbd.lba_offset,entry_offset,&owner);
+    if(grown) committed=zu_journal_commit(&j);
+    if(!rsg_shared_recover(&j)) {
+        zc_set_file_writer(NULL);zc_set_file_deleter(NULL);zc_set_source_writer(NULL);
+        uart_puts(g_uart,"RedSea: directory recovery failed; writes disabled\n");
+        return 0;
+    }
+    if(!committed)return 0;
+    *directory=fresh;
+    uart_puts(g_uart,"RedSea: directory grew safely\n");return 1;
+}
+#endif
+static int zupgrade_installer_recovery(void) {
+    struct zeal_upgrade_target target;
+    uint8_t primary[512], shadow_legacy[512], shadow_large[512];
+    struct zu_journal j;
+    j.io.context = NULL; j.io.read = zupgrade_read_target;
+    j.io.write = zupgrade_recovery_write; j.io.flush = zupgrade_recovery_flush;
+    j.io.capacity = virtio_blk_full_capacity(); j.io.journal = 34;
+    j.allowed_first = 2048; j.allowed_end = 130911; j.slots = 512; j.next = 0;
+    if (!zeal_upgrade_preflight(zupgrade_read_target, NULL, j.io.capacity, &target)) {
+        con_puts("zinstall: recovery check skipped; no recognized installation\n"); return 1;
+    }
+    if (!zupgrade_read_target(NULL, 34, primary) ||
+        !zupgrade_read_target(NULL, 34 + 2 + 3ull * 512, shadow_legacy) ||
+        !zupgrade_read_target(NULL, 34 + 2 + 3ull * ZU_JOURNAL_MAX_SLOTS, shadow_large)) {
+        con_puts("zinstall: recovery check failed; disk unchanged\n"); return 0;
+    }
+    if (zu_empty(primary) && zu_empty(shadow_legacy) && zu_empty(shadow_large)) {
+        con_puts("zinstall: no pending recovery\n"); return 1;
+    }
+    /* Never interpret arbitrary unpartitioned space as our journal. */
+    int legacy = zu_journal_header_ok(&j, primary) || zu_journal_header_ok(&j, shadow_legacy);
+    j.slots = ZU_JOURNAL_MAX_SLOTS;
+    int large = zu_journal_header_ok(&j, primary) || zu_journal_header_ok(&j, shadow_large);
+    /* The legacy shadow sector lies inside the larger journal's record area.
+     * After a completed larger transaction it can contain a stale record even
+     * though both actual larger-journal headers have been retired. */
+    if (!legacy && !large && zu_empty(primary) && zu_empty(shadow_large)) {
+        con_puts("zinstall: no pending recovery\n"); return 1;
+    }
+    if (legacy == large) {
+        con_puts("zinstall: recovery check failed; unrecognized journal\n"); return 0;
+    }
+    if (legacy) j.slots = 512;
+    int ok = zu_journal_recover(&j);
+    con_puts(ok ? "zinstall: pending recovery completed\n" :
+                  "zinstall: recovery failed; do not install\n");
+    return ok;
+}
+static struct { struct zu_journal journal; unsigned count, stop, bank_count, bank_stop, reclaim_count, reclaim_stop; int success, user, repeat; } g_upgrade_diag;
+static int zupgrade_diag_write(void *context, uint64_t sector, const uint8_t in[512]) {
+    (void)context;
+#ifdef ZEAL_UPGRADE_DIAG
+    if (g_upgrade_manifest_fault == 1 && (sector == ZU_SLOT_U_SHADOW || sector == ZU_SLOT_V_SHADOW)) {
+        uint8_t partial[512];
+        if (!virtio_blk_read_abs(partial, sector)) return 0;
+        for (unsigned i = 0; i < 7; i++) partial[i] = in[i];
+        if (!virtio_blk_write_abs(partial, sector) || !virtio_blk_flush_disk()) return 0;
+        g_upgrade_manifest_fault = 2; return 0;
+    }
+    if (g_upgrade_marker_fault == 1 && sector == ZU_PENDING_SHADOW) {
+        uint8_t partial[512];
+        if (!virtio_blk_read_abs(partial, sector)) return 0;
+        for (unsigned i = 0; i < 7; i++) partial[i] = in[i];
+        if (!virtio_blk_write_abs(partial, sector) || !virtio_blk_flush_disk()) return 0;
+        g_upgrade_marker_fault = 2; return 0;
+    }
+#endif
+    if (g_upgrade_diag.reclaim_stop && ++g_upgrade_diag.reclaim_count == g_upgrade_diag.reclaim_stop) return 0;
+    return virtio_blk_write_abs(in, sector);
+}
+static int zupgrade_diag_flush(void *context) {
+    (void)context; return virtio_blk_flush_disk();
+}
+static int zupgrade_diag_metadata(void *context, uint64_t sector, const uint8_t in[512]) {
+    (void)context;
+    if (!zu_journal_write(&g_upgrade_diag.journal, sector, in)) return 0;
+    return ++g_upgrade_diag.count != g_upgrade_diag.stop;
+}
+static int zupgrade_diag_bank_write(void *context, uint64_t sector, const uint8_t in[512]) {
+    (void)context;
+    if (++g_upgrade_diag.bank_count == g_upgrade_diag.bank_stop) return 0;
+    return virtio_blk_write_abs(in, sector);
+}
+/* Diagnostic-only combined protocol: a prepared source bank becomes visible
+ * only after the EFI journal's durable commit record exists. */
+static int zupgrade_diag_boot_publish(void) {
+    struct zeal_upgrade_target target;
+    struct zu_source_pending pending;
+    struct zu_journal j = {{NULL, zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+                            virtio_blk_full_capacity(), 34}, 2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+    if (g_vb_pci_disk_count != 1 ||
+        !zeal_upgrade_preflight(zupgrade_read_target, NULL, j.io.capacity, &target)) return 1;
+    int status = zu_pending_read(zupgrade_read_target, NULL, j.io.capacity,
+                                 target.bank_a, target.bank_b, &pending);
+    if (!status || status == 2) return 1;
+    if (status != 1 || zu_journal_committed(&j) != 1 || !zu_journal_recover(&j) ||
+        !zu_pending_publish(zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush, NULL, &pending)) {
+        uart_puts(g_uart, "upgrade diagnostic: pending update requires ISO recovery; source not mounted\n");
+        return 0;
+    }
+    uart_puts(g_uart, "upgrade diagnostic: committed source bank published\n");
+    return 1;
+}
+static int zupgrade_diag_gap_with_pending(struct zeal_upgrade_target *target, int expected_state) {
+    struct zu_source_pending pending;
+    uint8_t sector[512];
+    int status = zu_pending_read(zupgrade_read_target, NULL, virtio_blk_full_capacity(),
+                                 target->bank_a, target->bank_b, &pending);
+    if (status != expected_state) return 0;
+    for (uint64_t lba = 34; lba < 2048; lba++) {
+        if (lba == ZU_PENDING_PRIMARY || lba == ZU_PENDING_SHADOW) continue;
+        if (!zupgrade_read_target(NULL, lba, sector) || !zu_empty(sector)) return 0;
+    }
+    return 1;
+}
+/* Explicit diagnostic build only. Never used for the installer or Upgrade. */
+static void zupgrade_diagnostic(const char *mode) {
+    g_upgrade_diag.success = 0;
+    struct zeal_upgrade_target target;
+    if (!zeal_upgrade_preflight(zupgrade_read_target, NULL, virtio_blk_full_capacity(), &target)) {
+        con_puts("zinstall: diagnostic target not recognized\n"); return;
+    }
+    if (streq(mode, "baseline")) {
+        static struct efi_source_reader reader;
+        uint8_t data[512];
+        if (!efi_source_open(zupgrade_read_target, NULL, 2048, 128863, &reader)) {
+            con_puts("zinstall: diagnostic baseline unavailable\n"); return;
+        }
+        uint32_t crc = 0xffffffffu, size = reader.bytes;
+        while (reader.sectors_left) {
+            if (!efi_source_read_next(&reader, data)) {
+                con_puts("zinstall: diagnostic baseline read failed\n"); return;
+            }
+            for (unsigned i = 0; i < 512; i++) crc = zeal_partition_crc_step(crc, data[i]);
+        }
+        con_puts("zinstall: diagnostic baseline bytes "); zc_print_decimal(size);
+        con_puts(" crc32 "); zc_print_decimal(crc ^ 0xffffffffu); con_puts("\n");
+        return;
+    }
+    if (streq(mode, "baseline-index")) {
+        static struct efi_source_reader reader;
+        struct efi_source_tar tar;
+        struct efi_source_tar_entry entry;
+        uint8_t data[512];
+        if (!efi_source_open(zupgrade_read_target, NULL, 2048, 128863, &reader)) {
+            con_puts("zinstall: diagnostic baseline unavailable\n"); return;
+        }
+        tar.reader = &reader; tar.remaining = 0; tar.finished = 0;
+        uint64_t total = 0; uint32_t count = 0, sum = 0;
+        int status;
+        while ((status = efi_source_tar_next(&tar, &entry)) == 1) {
+            uint32_t crc = 0xffffffffu;
+            while (tar.remaining) {
+                uint32_t used;
+                if (!efi_source_tar_data(&tar, data, &used)) {
+                    con_puts("zinstall: diagnostic baseline tar failed\n"); return;
+                }
+                for (uint32_t i = 0; i < used; i++) crc = zeal_partition_crc_step(crc, data[i]);
+            }
+            count++; total += entry.bytes; sum += crc ^ 0xffffffffu;
+        }
+        if (status != 0) { con_puts("zinstall: diagnostic baseline tar failed\n"); return; }
+        con_puts("zinstall: diagnostic baseline files "); zc_print_decimal(count);
+        con_puts(" bytes "); zc_print_decimal(total); con_puts(" crc-sum ");
+        zc_print_decimal(sum); con_puts("\n"); return;
+    }
+    if (streq(mode, "baseline-compare")) {
+        static struct zu_source_scan scan;
+        static struct efi_source_reader reader;
+        struct zu_source_stats stats;
+        if (!zu_source_catalog(zupgrade_read_target, NULL, target.bank_a, target.bank_b, &scan) ||
+            !efi_source_open(zupgrade_read_target, NULL, 2048, 128863, &reader)) {
+            con_puts("zinstall: diagnostic source catalog failed\n"); return;
+        }
+        struct efi_source_tar tar = {.reader = &reader};
+        if (!zu_source_baseline_compare(&scan, &tar, &stats)) {
+            con_puts("zinstall: diagnostic source comparison failed\n"); return;
+        }
+        con_puts("zinstall: source baseline unchanged "); zc_print_decimal(stats.unchanged);
+        con_puts(" edited "); zc_print_decimal(stats.edited);
+        con_puts(" deleted "); zc_print_decimal(stats.deleted);
+        con_puts(" missing "); zc_print_decimal(stats.missing);
+        con_puts(" user-only "); zc_print_decimal(stats.user_only); con_puts("\n"); return;
+    }
+    if (streq(mode, "compressed-compare")) {
+        static struct zu_source_scan scan;
+        static struct efi_compressed_source source;
+        struct efi_source_tar tar; struct zu_source_stats stats;
+        if (!zu_source_catalog(zupgrade_read_target, NULL, target.bank_a, target.bank_b, &scan) ||
+            !efi_compressed_source_open(zupgrade_read_target, NULL, target.esp_first,
+                                        target.esp_sectors, &source, &tar) ||
+            !zu_source_baseline_compare(&scan, &tar, &stats)) {
+            con_puts("zinstall: compressed baseline comparison failed\n"); return;
+        }
+        con_puts("zinstall: compressed baseline unchanged "); zc_print_decimal(stats.unchanged);
+        con_puts(" edited "); zc_print_decimal(stats.edited);
+        con_puts(" deleted "); zc_print_decimal(stats.deleted);
+        con_puts(" missing "); zc_print_decimal(stats.missing);
+        con_puts(" user-only "); zc_print_decimal(stats.user_only); con_puts("\n"); return;
+    }
+    if (streq(mode, "reclaim-start") || streq(mode, "reclaim-step") ||
+        streq(mode, "reclaim-interrupt") || streq(mode, "reclaim-recover")) {
+        static struct efi_fat32_ownership owner;
+        static struct efi_reclaim_batch batch;
+        struct zu_journal j = {{NULL, zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+                                virtio_blk_full_capacity(), 34}, 2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+        struct zu_source_pending pending;
+        if (zu_pending_read(zupgrade_read_target, NULL, j.io.capacity, target.bank_a, target.bank_b, &pending) != 0) {
+            con_puts("zinstall: reclaim unavailable; source update pending\n"); return;
+        }
+        g_upgrade_diag.reclaim_count = 0; g_upgrade_diag.reclaim_stop = 0;
+        if (streq(mode, "reclaim-recover")) {
+            con_puts(zu_journal_recover(&j) ? "zinstall: reclaim journal recovered\n" :
+                                             "zinstall: reclaim recovery failed\n"); return;
+        }
+        if (!efi_reclaim_boot_safe(zupgrade_read_target, NULL)) {
+            con_puts("zinstall: reclaim refused; active boot files not verified\n"); return;
+        }
+        if (streq(mode, "reclaim-start")) {
+            if (zu_journal_committed(&j) != 1) {
+                con_puts("zinstall: reclaim refused; completed upgrade not verified\n"); return;
+            }
+            con_puts(efi_reclaim_start(&j, &owner) ? "zinstall: reclaim cursor started\n" :
+                                                   "zinstall: reclaim start failed\n"); return;
+        }
+        if (streq(mode, "reclaim-interrupt")) g_upgrade_diag.reclaim_stop = 1320;
+        int done = 0, ok = efi_reclaim_step(&j, &owner, &batch, &done);
+        int interrupted = g_upgrade_diag.reclaim_stop && g_upgrade_diag.reclaim_count == g_upgrade_diag.reclaim_stop;
+        g_upgrade_diag.reclaim_stop = 0;
+        if (!ok) con_puts(interrupted ? "zinstall: reclaim interruption staged\n" : "zinstall: reclaim step failed\n");
+        else con_puts(done ? "zinstall: reclaim complete\n" : "zinstall: reclaim batch complete\n");
+        return;
+    }
+    if (streq(mode, "publish-bank")) {
+        struct zu_source_pending pending;
+        if (zu_pending_read(zupgrade_read_target, NULL, virtio_blk_full_capacity(),
+                            target.bank_a, target.bank_b, &pending) != 1 ||
+            !zu_pending_publish(zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+                                NULL, &pending)) {
+            con_puts("zinstall: diagnostic source publication failed\n"); return;
+        }
+        con_puts("zinstall: diagnostic source bank published\n"); return;
+    }
+    if (streq(mode, "cancel-bank")) {
+        struct zu_source_pending pending;
+        struct zu_journal j = {{NULL, zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+                                virtio_blk_full_capacity(), 34}, 2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+        int state = zu_pending_read(zupgrade_read_target, NULL, j.io.capacity,
+                                    target.bank_a, target.bank_b, &pending);
+        if (state == 2) { con_puts("zinstall: diagnostic source cancellation complete\n"); return; }
+        if (state != 1 ||
+            !zu_pending_cancel(&j, &pending)) {
+            con_puts("zinstall: diagnostic source cancellation failed\n"); return;
+        }
+        con_puts("zinstall: diagnostic source cancellation complete\n"); return;
+    }
+    if (streq(mode, "stage-bank") || streq(mode, "interrupt-bank") || streq(mode, "prepare-bank")) {
+        static struct zu_source_scan scan;
+        static struct zu_source_stage stage;
+        static struct efi_source_reader reader;
+        static struct efi_compressed_source compressed;
+        struct efi_source_tar baseline;
+        struct zu_source_stats stats;
+        struct zu_source_pending old_marker;
+        int cancelled = zu_pending_read(zupgrade_read_target, NULL, virtio_blk_full_capacity(),
+                                        target.bank_a, target.bank_b, &old_marker) == 2;
+        struct zu_journal owner_j = {{NULL, zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+                                      virtio_blk_full_capacity(), 34}, 2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+        enum efi_boot_slot slot = g_upgrade_diag.repeat ?
+            efi_boot_slot_read(zupgrade_read_target, NULL, target.esp_first, target.esp_sectors) : EFI_BOOT_LEGACY;
+        int gap_ok = g_upgrade_diag.repeat ? zu_owner_prepare(&owner_j, 0) :
+            (zeal_upgrade_gap_empty(zupgrade_read_target, NULL) ||
+             (cancelled && zupgrade_diag_gap_with_pending(&target, 2)));
+        int baseline_ok;
+        if (g_upgrade_diag.repeat) {
+            baseline_ok = (slot == EFI_BOOT_U || slot == EFI_BOOT_V) &&
+                efi_compressed_source_open_slot(zupgrade_read_target, NULL, target.esp_first,
+                                                target.esp_sectors, &compressed, &baseline, slot == EFI_BOOT_V);
+        } else {
+            baseline_ok = efi_source_open(zupgrade_read_target, NULL, target.esp_first, target.esp_sectors, &reader);
+            baseline = (struct efi_source_tar){.reader = &reader};
+        }
+        if ((streq(mode, "prepare-bank") && !gap_ok) || !g_upgrade_new_tar ||
+            g_upgrade_new_tar_size > SIZE_MAX ||
+            !zu_source_catalog(zupgrade_read_target, NULL, target.bank_a, target.bank_b, &scan) || !baseline_ok) {
+            con_puts("zinstall: diagnostic source staging preflight failed\n"); return;
+        }
+        if (!zu_source_baseline_compare(&scan, &baseline, &stats) ||
+            !zu_source_incoming_index(&stage, g_upgrade_new_tar, (size_t)g_upgrade_new_tar_size) ||
+            !zu_source_make_plan(&scan, &stage)) {
+            con_puts("zinstall: diagnostic source staging plan failed\n"); return;
+        }
+        g_upgrade_diag.bank_count = 0;
+        g_upgrade_diag.bank_stop = streq(mode, "interrupt-bank") ? 25 : 0;
+        int staged = zu_source_stage_inactive(&scan, &stage, target.bank_a, target.bank_b,
+                                               virtio_blk_full_capacity(), zupgrade_diag_bank_write,
+                                               zupgrade_diag_flush);
+        if (!staged && g_upgrade_diag.bank_stop && g_upgrade_diag.bank_count == g_upgrade_diag.bank_stop) {
+            con_puts("zinstall: diagnostic source staging interrupted; active bank unchanged\n"); return;
+        }
+        if (!staged) { con_puts("zinstall: diagnostic source staging failed\n"); return; }
+        if (streq(mode, "prepare-bank")) {
+            struct zu_source_pending pending = {scan.bank, stage.target, virtio_blk_full_capacity(),
+                scan.generation, stage.target_generation, stage.needed, 0, 0};
+            if (!zu_pending_range_crc(zupgrade_read_target, NULL, scan.bank, 65536, &pending.active_crc) ||
+                !zu_pending_range_crc(zupgrade_read_target, NULL, stage.target + 1,
+                    stage.needed < 65536 ? stage.needed : stage.needed - 1, &pending.candidate_crc) ||
+                !zu_pending_prepare(zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+                                    NULL, &pending)) {
+                con_puts("zinstall: diagnostic source marker failed\n"); return;
+            }
+            g_upgrade_diag.success = 1;
+            con_puts(g_upgrade_diag.user ? "zinstall: source files prepared\n" :
+                     "zinstall: diagnostic source bank prepared; active bank unchanged\n"); return;
+        }
+        con_puts("zinstall: diagnostic source bank staged; active bank unchanged\n"); return;
+    }
+    g_upgrade_diag.journal = (struct zu_journal){
+        {NULL, zupgrade_read_target, zupgrade_diag_write, zupgrade_diag_flush,
+         virtio_blk_full_capacity(), 34}, 2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+    if (streq(mode, "recover")) {
+        con_puts(zu_journal_recover(&g_upgrade_diag.journal) ?
+                 "zinstall: diagnostic recovery complete\n" : "zinstall: diagnostic recovery failed\n");
+        return;
+    }
+    int pending_switch = streq(mode, "switch-pending") || streq(mode, "interrupt-pending");
+    int switch_payload = streq(mode, "switch") || streq(mode, "interrupt-switch") || pending_switch;
+    int all_payload = switch_payload || streq(mode, "stage-all") || streq(mode, "interrupt-all");
+    int source_payload = all_payload || streq(mode, "stage-source") || streq(mode, "interrupt-source");
+    unsigned stop = streq(mode, "interrupt") ? 6 : streq(mode, "interrupt-source") ? 40 :
+                    streq(mode, "interrupt-all") ? 520 : 0;
+    struct zu_source_pending switch_marker;
+    int repeat_gap = g_upgrade_diag.repeat && pending_switch &&
+        zu_pending_read(zupgrade_read_target, NULL, virtio_blk_full_capacity(), target.bank_a,
+                        target.bank_b, &switch_marker) == 1 && zu_owner_prepare(&g_upgrade_diag.journal, 0);
+    if ((!stop && !streq(mode, "commit") && !source_payload) ||
+        !(repeat_gap || (pending_switch ? zupgrade_diag_gap_with_pending(&target, 1) :
+                           zeal_upgrade_gap_empty(zupgrade_read_target, NULL)))) {
+        con_puts("zinstall: diagnostic unavailable or journal area not empty\n"); return;
+    }
+    static uint8_t bytes[100003];
+    static const uint8_t name[11] = {'Z','E','A','L','D','I','A','G','B','I','N'};
+    static const uint8_t source_name[11] = {'Z','U','S','O','U','R','C','E','L','Z','4'};
+    static const uint8_t kernel_name[11] = {'Z','U','K','E','R','N','E','L','E','L','F'};
+    static const uint8_t booter_name[11] = {'Z','U','B','O','O','T','E','R','E','L','F'};
+    static const uint8_t source_name_v[11] = {'Z','V','S','O','U','R','C','E','L','Z','4'};
+    static const uint8_t kernel_name_v[11] = {'Z','V','K','E','R','N','E','L','E','L','F'};
+    static const uint8_t booter_name_v[11] = {'Z','V','B','O','O','T','E','R','E','L','F'};
+    static const uint8_t config_name[11] = {'L','I','M','I','N','E','~','1','C','O','N'};
+    static const uint8_t config_old[] =
+        "timeout: 0\nserial: yes\ngraphics: yes\ndefault_entry: 1\nquiet: no\n\n"
+        "/ZealOS aarch64 zealbooter\n    protocol: limine\n"
+        "    path: boot():/boot/zealbooter.elf\n    module_path: boot():/boot/kernel.elf\n"
+        "    module_path: boot():/boot/demo.hcbc\n    module_path: boot():/boot/sources.tar\n"
+        "    kaslr: no\n    resolution: 800x600x32\n";
+    static const uint8_t config_new[] =
+        "timeout: 0\nserial: yes\ngraphics: yes\ndefault_entry: 1\nquiet: no\n\n"
+        "/ZealOS aarch64 zealbooter\n    protocol: limine\n"
+        "    path: boot():/ZUBOOTER.ELF\n    module_path: boot():/ZUKERNEL.ELF\n"
+        "    module_path: boot():/boot/demo.hcbc\n    module_path: boot():/ZUSOURCE.LZ4\n"
+        "    kaslr: no\n    resolution: 800x600x32\n";
+    const uint8_t *payload = bytes, *target_name = name;
+    enum efi_boot_slot active_slot = g_upgrade_diag.repeat ?
+        efi_boot_slot_read(zupgrade_read_target, NULL, target.esp_first, target.esp_sectors) : EFI_BOOT_LEGACY;
+    if (g_upgrade_diag.repeat && active_slot != EFI_BOOT_U && active_slot != EFI_BOOT_V) {
+        con_puts("zinstall: upgrade boot configuration is not recognized\n"); return;
+    }
+    const uint8_t *next_source = active_slot == EFI_BOOT_U ? source_name_v : source_name;
+    const uint8_t *next_kernel = active_slot == EFI_BOOT_U ? kernel_name_v : kernel_name;
+    const uint8_t *next_booter = active_slot == EFI_BOOT_U ? booter_name_v : booter_name;
+    uint32_t payload_size = sizeof(bytes), unpacked;
+    if (source_payload) {
+        if (!g_upgrade_sources || g_upgrade_sources_size > UINT32_MAX ||
+            !zeal_lz4_archive_size(g_upgrade_sources, (size_t)g_upgrade_sources_size, &unpacked)) {
+            con_puts("zinstall: diagnostic source payload unavailable or damaged\n"); return;
+        }
+        payload = g_upgrade_sources; payload_size = (uint32_t)g_upgrade_sources_size;
+        target_name = next_source;
+    }
+    if (all_payload && (!g_upgrade_kernel || !g_upgrade_booter ||
+        g_upgrade_kernel_size < 64 || g_upgrade_booter_size < 64 ||
+        g_upgrade_kernel_size > UINT32_MAX || g_upgrade_booter_size > UINT32_MAX ||
+        g_upgrade_kernel[0] != 0x7f || g_upgrade_kernel[1] != 'E' ||
+        g_upgrade_kernel[2] != 'L' || g_upgrade_kernel[3] != 'F' ||
+        g_upgrade_booter[0] != 0x7f || g_upgrade_booter[1] != 'E' ||
+        g_upgrade_booter[2] != 'L' || g_upgrade_booter[3] != 'F')) {
+        con_puts("zinstall: diagnostic ELF payload unavailable or damaged\n"); return;
+    }
+    for (unsigned i = 0; i < sizeof(bytes); i++) bytes[i] = (uint8_t)(i * 73u + i / 19u);
+    g_upgrade_diag.count = 0; g_upgrade_diag.stop = stop;
+    if (!zu_journal_begin(&g_upgrade_diag.journal)) {
+        con_puts("zinstall: diagnostic journal start failed\n"); return;
+    }
+    int written = efi_fat32_create_root_ex(zupgrade_read_target, zupgrade_diag_write,
+        zupgrade_diag_metadata, zupgrade_diag_flush, NULL, 2048, 128863,
+        target_name, payload, payload_size);
+    if (written && all_payload)
+        written = efi_fat32_create_root_ex(zupgrade_read_target, zupgrade_diag_write,
+            zupgrade_diag_metadata, zupgrade_diag_flush, NULL, 2048, 128863,
+            next_kernel, g_upgrade_kernel, (uint32_t)g_upgrade_kernel_size);
+    if (written && all_payload)
+        written = efi_fat32_create_root_ex(zupgrade_read_target, zupgrade_diag_write,
+            zupgrade_diag_metadata, zupgrade_diag_flush, NULL, 2048, 128863,
+            next_booter, g_upgrade_booter, (uint32_t)g_upgrade_booter_size);
+    if (written && g_upgrade_diag.repeat && all_payload) {
+        struct zu_slot_fingerprint f;
+        f.bytes[0] = (uint32_t)g_upgrade_sources_size; f.crc[0] = zeal_partition_crc(g_upgrade_sources, f.bytes[0]);
+        f.bytes[1] = (uint32_t)g_upgrade_kernel_size; f.crc[1] = zeal_partition_crc(g_upgrade_kernel, f.bytes[1]);
+        f.bytes[2] = (uint32_t)g_upgrade_booter_size; f.crc[2] = zeal_partition_crc(g_upgrade_booter, f.bytes[2]);
+        written = zu_slot_manifest_write(&g_upgrade_diag.journal, active_slot == EFI_BOOT_U, &f);
+    }
+    if (written && switch_payload) {
+        if (streq(mode, "interrupt-switch") || streq(mode, "interrupt-pending"))
+            g_upgrade_diag.stop = stop = g_upgrade_diag.count + 1;
+#ifdef ZEAL_UPGRADE_DIAG
+        if (g_upgrade_switch_fault && g_upgrade_diag.repeat)
+            g_upgrade_diag.stop = stop = g_upgrade_diag.count + 1;
+#endif
+        uint8_t padded[sizeof(efi_config_legacy) - 1];
+        const uint8_t *expected = config_old, *replacement = config_new;
+        uint32_t replacement_size = sizeof(config_new) - 1;
+        if (g_upgrade_diag.repeat) {
+            expected = active_slot == EFI_BOOT_U ? efi_config_u : efi_config_v;
+            uint32_t n = active_slot == EFI_BOOT_U ? sizeof(efi_config_u) - 1 : sizeof(efi_config_v) - 1;
+            for (unsigned i = 0; i < sizeof(padded); i++) padded[i] = i < n ? expected[i] : '\n';
+            expected = padded;
+            replacement = active_slot == EFI_BOOT_U ? efi_config_v : efi_config_u;
+            replacement_size = active_slot == EFI_BOOT_U ? sizeof(efi_config_v) - 1 : sizeof(efi_config_u) - 1;
+        }
+        written = efi_fat32_replace_root_small(zupgrade_read_target, zupgrade_diag_metadata,
+            zupgrade_diag_flush, NULL, 2048, 128863, config_name,
+            expected, sizeof(config_old) - 1, replacement, replacement_size);
+    }
+    if (!written && stop && g_upgrade_diag.count == stop) {
+        con_puts("zinstall: diagnostic interruption staged; reboot ISO and recover\n"); return;
+    }
+    if (!written || !zu_journal_commit(&g_upgrade_diag.journal)) {
+        con_puts("zinstall: diagnostic failed; reboot ISO and recover\n"); return;
+    }
+    g_upgrade_diag.success = 1;
+    con_puts(g_upgrade_diag.user ? "zinstall: boot files updated\n" : "zinstall: diagnostic committed\n");
+}
+static int zupgrade_reclaim_resume(void) {
+    static struct efi_fat32_ownership owner;
+    static struct efi_reclaim_batch batch;
+    struct zeal_upgrade_target target; struct efi_source_reader reader;
+    struct efi_reclaim_cursor cursor; struct zu_source_pending pending;
+    struct zu_journal j = {{NULL, zupgrade_read_target, zupgrade_recovery_write,
+                            zupgrade_recovery_flush, virtio_blk_full_capacity(), 34},
+                           2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+    if (!zeal_upgrade_preflight(zupgrade_read_target, NULL, j.io.capacity, &target)) return 1;
+    if (!efi_reclaim_reader(zupgrade_read_target, NULL, 2048, 128863, &reader)) {
+        con_puts("zinstall: recovery failed; EFI directory unavailable\n"); return 0;
+    }
+    int cursor_state = efi_reclaim_find_active(&reader, &cursor);
+    if (!cursor_state) return 1;
+    if (cursor_state != 1) { con_puts("zinstall: recovery failed; ambiguous reclaim cursor\n"); return 0; }
+    if (zu_pending_read(zupgrade_read_target, NULL, j.io.capacity,
+                        target.bank_a, target.bank_b, &pending) != 0 ||
+        !efi_reclaim_boot_safe(zupgrade_read_target, NULL)) {
+        con_puts("zinstall: recovery failed; reclaim boot files not verified\n"); return 0;
+    }
+    int done = 0;
+    while (!done) {
+        if (!efi_reclaim_step(&j, &owner, &batch, &done)) {
+            con_puts("zinstall: recovery failed; reclaim incomplete\n"); return 0;
+        }
+    }
+    con_puts("zinstall: reclaim recovery complete\n"); return 1;
+}
+/* Prepare journal ownership, then reclaim only files not referenced by the
+ * current verified boot configuration. Interrupted cursors are resumed by
+ * the normal recovery path before this helper is called. */
+static int zupgrade_repeat_space(struct zu_journal *j, enum efi_boot_slot slot) {
+    static struct efi_fat32_ownership owner;
+    static struct efi_reclaim_batch batch;
+    static const uint8_t names[2][3][11] = {
+        {{'Z','U','S','O','U','R','C','E','L','Z','4'}, {'Z','U','K','E','R','N','E','L','E','L','F'},
+         {'Z','U','B','O','O','T','E','R','E','L','F'}},
+        {{'Z','V','S','O','U','R','C','E','L','Z','4'}, {'Z','V','K','E','R','N','E','L','E','L','F'},
+         {'Z','V','B','O','O','T','E','R','E','L','F'}}};
+    struct efi_source_reader r; struct efi_reclaim_cursor c;
+    struct zu_slot_fingerprint active_f, actual, inactive_f;
+    int prior_commit = zu_journal_committed(j);
+    if ((slot != EFI_BOOT_U && slot != EFI_BOOT_V) ||
+        !efi_reclaim_boot_safe(zupgrade_read_target, NULL) || !zu_owner_prepare(j, 1) ||
+        !efi_reclaim_reader(zupgrade_read_target, NULL, 2048, 128863, &r) ||
+        efi_reclaim_find_active(&r, &c) != 0) return 0;
+    int present = efi_reclaim_find(&r, 0, &c);
+    if (present < 0) return 0;
+    int original_present = present;
+    unsigned active_index = slot == EFI_BOOT_V, inactive_index = !active_index;
+    int inactive_present[3], any_inactive = 0;
+    for (unsigned i = 0; i < 3; i++) {
+        inactive_present[i] = efi_reclaim_find_dir(&r, r.root, 0, names[inactive_index][i], &c);
+        if (inactive_present[i] < 0) return 0;
+        any_inactive |= inactive_present[i];
+    }
+    int active_state = zu_slot_manifest_read(j, active_index, &active_f);
+    if (active_state != 1) {
+        /* Bootstrap only the original first upgrade, before touching its
+         * old baseline, and only if no unknown alternate files exist. */
+        if (slot != EFI_BOOT_U || !original_present || any_inactive || prior_commit != 1 ||
+            !zu_slot_fingerprint_read(&r, active_index, &active_f) ||
+            !zu_slot_manifest_write(j, active_index, &active_f)) return 0;
+    }
+    if (!zu_slot_fingerprint_read(&r, active_index, &actual)) return 0;
+    for (unsigned i = 0; i < 3; i++)
+        if (actual.bytes[i] != active_f.bytes[i] || actual.crc[i] != active_f.crc[i]) return 0;
+    if (any_inactive) {
+        if (zu_slot_manifest_read(j, inactive_index, &inactive_f) != 1) return 0;
+        for (unsigned i = 0; i < 3; i++) if (inactive_present[i]) {
+            uint32_t size, crc;
+            if (!zu_slot_file_crc(&r, names[inactive_index][i], &size, &crc) ||
+                size != inactive_f.bytes[i] || crc != inactive_f.crc[i]) return 0;
+        }
+    }
+    if (present == 1) {
+        if (!efi_reclaim_start(j, &owner)) return 0;
+        int done = 0;
+        while (!done) if (!efi_reclaim_step(j, &owner, &batch, &done)) return 0;
+    }
+    for (unsigned i = 0; i < 3; i++) {
+        if (!efi_reclaim_reader(zupgrade_read_target, NULL, 2048, 128863, &r)) return 0;
+        present = efi_reclaim_find_dir(&r, r.root, 0, names[slot == EFI_BOOT_U][i], &c);
+        if (present < 0) return 0;
+        if (present == 1) {
+            if (!efi_reclaim_start_inactive(j, &owner, i)) return 0;
+            int done = 0;
+            while (!done) if (!efi_reclaim_step(j, &owner, &batch, &done)) return 0;
+        }
+    }
+    return zu_owner_clear_commit(j);
+}
+#endif
+
+#ifndef ZEAL_FORCE_PI4
+/* Upgrade phases yield to the desktop between long, durable operations. */
+static struct { int phase, repeat; enum efi_boot_slot active; } g_upgrade_job;
+static void zupgrade_job_begin(void) {
+        struct zeal_upgrade_target target;
+        struct zu_source_pending pending;
+        struct zu_journal j = {{NULL, zupgrade_read_target, zupgrade_recovery_write,
+                                zupgrade_recovery_flush, virtio_blk_full_capacity(), 34},
+                               2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+        uint8_t primary[512], shadow[512];
+        if (!zeal_upgrade_preflight(zupgrade_read_target, NULL, j.io.capacity, &target) ||
+            !zupgrade_read_target(NULL, 34, primary) ||
+            !zupgrade_read_target(NULL, 34 + 2 + 3ull * j.slots, shadow)) {
+            con_puts("zinstall: upgrade unavailable; no recognized installation\n"); return;
+        }
+        int state = zu_pending_read(zupgrade_read_target, NULL, j.io.capacity,
+                                    target.bank_a, target.bank_b, &pending);
+        if (state < 0) {
+            if (!zu_owner_recover_torn_pending(&j) ||
+                zu_pending_read(zupgrade_read_target, NULL, j.io.capacity,
+                                target.bank_a, target.bank_b, &pending) != 0) {
+                con_puts("zinstall: upgrade recovery failed; marker damaged\n"); return;
+            }
+            state = 0;
+        }
+        enum efi_boot_slot active = efi_boot_slot_read(zupgrade_read_target, NULL,
+                                                       target.esp_first, target.esp_sectors);
+        if (active == EFI_BOOT_UNKNOWN) {
+            con_puts("zinstall: upgrade unavailable; boot configuration not recognized\n"); return;
+        }
+        if (state == 1) {
+            if (zu_journal_committed(&j) == 1) {
+                con_puts("zinstall: upgrade already committed; detach ISO and boot disk\n"); return;
+            }
+            if ((!zu_empty(primary) || !zu_empty(shadow)) &&
+                (!(zu_journal_header_ok(&j, primary) || zu_journal_header_ok(&j, shadow)) ||
+                 !zu_journal_recover(&j))) {
+                con_puts("zinstall: upgrade recovery failed; journal damaged\n"); return;
+            }
+            if (!zu_pending_cancel(&j, &pending)) {
+                con_puts("zinstall: upgrade recovery failed; original files changed\n"); return;
+            }
+        }
+        g_upgrade_job.active = active;
+        g_upgrade_job.repeat = active == EFI_BOOT_U || active == EFI_BOOT_V;
+        g_upgrade_job.phase = 1;
+        g_install_job.pass = 0;
+        con_puts("zinstall: upgrade started\n");
+}
+static void zupgrade_job_step(void) {
+    struct zu_journal j = {{NULL, zupgrade_read_target, zupgrade_recovery_write,
+                            zupgrade_recovery_flush, virtio_blk_full_capacity(), 34},
+                           2048, 130911, ZU_JOURNAL_MAX_SLOTS, 0};
+    if (g_upgrade_job.phase == 1) {
+        if (g_upgrade_job.repeat && !zupgrade_repeat_space(&j, g_upgrade_job.active)) {
+            g_upgrade_job.phase = 0;
+            con_puts("zinstall: upgrade preparation failed; reboot ISO for recovery\n"); return;
+        }
+        g_upgrade_job.phase = 2;
+        con_puts("zinstall: disk preparation complete\n"); return;
+    }
+    if (g_upgrade_job.phase == 2) {
+        g_upgrade_diag.user = 1; g_upgrade_diag.repeat = g_upgrade_job.repeat;
+        zupgrade_diagnostic("prepare-bank");
+        g_upgrade_diag.user = g_upgrade_diag.repeat = 0;
+        if (!g_upgrade_diag.success) {
+            g_upgrade_job.phase = 0;
+            con_puts("zinstall: upgrade preparation failed\n"); return;
+        }
+        g_upgrade_job.phase = 3;
+        con_puts("zinstall: system files prepared\n"); return;
+    }
+    if (g_upgrade_job.phase == 3) {
+        g_upgrade_diag.user = 1; g_upgrade_diag.repeat = g_upgrade_job.repeat;
+        zupgrade_diagnostic("switch-pending");
+        g_upgrade_diag.user = g_upgrade_diag.repeat = 0;
+        g_upgrade_job.phase = 0;
+        if (!g_upgrade_diag.success) {
+            con_puts("zinstall: upgrade failed; reboot ISO for recovery\n"); return;
+        }
+        g_install_job.pass = 2;
+        con_puts("zinstall: upgrade complete; detach ISO and boot from disk\n"); return;
+    }
+    con_puts("zinstall: no active upgrade\n");
+}
+#endif
+
 static void zinstall_handle(const char *args) {
+#ifdef ZEAL_FORCE_PI4
+    pi4_sd_install_handle(args);
+    return;
+#endif
     uint64_t sectors, data_start, sector, next_report;
     uint32_t extent_count, max_batch;
+    if (streq(args, "finish")) {
+        /* QEMU virt uses PSCI over HVC with the supported UEFI configuration.
+         * The host must remove the ISO before starting the VM again. */
+        if (g_audio_is_pi || g_install_job.active || g_install_job.pass != 2) {
+            con_puts("Installation has not finished.\n");
+            return;
+        }
+        if (!virtio_blk_flush_disk()) {
+            con_puts("Final disk flush failed. Leave the VM running.\n");
+            return;
+        }
+        uart_puts(g_uart, "Installer: powering off after verified installation\n");
+        register uint64_t function __asm__("x0") = 0x84000008u; /* PSCI SYSTEM_OFF */
+        __asm__ volatile("hvc #0" : "+r"(function) : : "memory");
+        con_puts("Automatic power off failed. Stop the VM in UTM.\n");
+        return;
+    }
+    if (streq(args, "step")) {
+        if (!g_install_job.active) con_puts("zinstall: no active installation\n");
+        else (void)zinstall_job_step();
+        return;
+    }
+    if (g_install_job.active) {
+        con_puts("zinstall: installation already running; finish it before starting another\n");
+        return;
+    }
+
+#ifndef ZEAL_FORCE_PI4
+    if (g_upgrade_job.phase && !streq(args, "upgrade-step")) {
+        con_puts("zinstall: upgrade already running\n"); return;
+    }
+#endif
 
     /* UTM may expose the booted ISO through a USB mass-storage device, which
      * reports the media as a disk instead of optical media.  The validated
@@ -15591,17 +16626,137 @@ static void zinstall_handle(const char *args) {
         return;
     }
     if (!virtio_blk_absolute_ready() ||
-        virtio_blk_full_capacity() != sectors) {
-        con_puts("zinstall: attach one PCI VirtIO target disk of exactly 128 MiB\n");
+        virtio_blk_full_capacity() < sectors) {
+        con_puts("zinstall: attach one PCI VirtIO target disk of at least 128 MiB\n");
+        return;
+    }
+    if (g_vb_pci_disk_count != 1) {
+        con_puts("zinstall: attach only the intended PCI VirtIO target disk; multiple targets are ambiguous\n");
         return;
     }
     if (!virtio_blk_flush_disk()) {
         con_puts("zinstall: target does not support durable flush; no install started\n");
         return;
     }
+#ifndef ZEAL_FORCE_PI4
+#ifndef ZEAL_PI_DIAG
+    /* Resolve filesystem journal ownership before any installer command,
+     * including direct command-line upgrades that bypass the GUI. */
+    if (!rsg_guest_recover()) { con_puts("zinstall: recovery failed; do not install\n"); return; }
+#endif
+    if (streq(args, "recovery")) {
+        if (zupgrade_installer_recovery()) (void)zupgrade_reclaim_resume();
+        return;
+    }
+    if (streq(args, "upgrade-begin")) { zupgrade_job_begin(); return; }
+    if (streq(args, "upgrade-step")) { zupgrade_job_step(); return; }
+    if (streq(args, "upgrade")) {
+        zupgrade_job_begin();
+        while (g_upgrade_job.phase) zupgrade_job_step();
+        return;
+    }
+    if (streq(args, "upgrade-payload-check")) {
+        uint32_t unpacked;
+        if (!g_upgrade_sources || g_upgrade_sources_size > SIZE_MAX ||
+            !zeal_lz4_archive_size(g_upgrade_sources, (size_t)g_upgrade_sources_size, &unpacked)) {
+            con_puts("zinstall: compressed upgrade archive unavailable or damaged\n"); return;
+        }
+        if (!g_upgrade_kernel || !g_upgrade_booter || g_upgrade_kernel_size < 64 ||
+            g_upgrade_booter_size < 64 || g_upgrade_kernel[0] != 0x7f ||
+            g_upgrade_kernel[1] != 'E' || g_upgrade_kernel[2] != 'L' || g_upgrade_kernel[3] != 'F' ||
+            g_upgrade_booter[0] != 0x7f || g_upgrade_booter[1] != 'E' ||
+            g_upgrade_booter[2] != 'L' || g_upgrade_booter[3] != 'F') {
+            con_puts("zinstall: upgrade ELF payload unavailable or damaged\n"); return;
+        }
+        con_puts("zinstall: compressed upgrade archive verified, uncompressed bytes ");
+        zc_print_decimal(unpacked); con_puts("\n"); return;
+    }
+#ifdef ZEAL_UPGRADE_DIAG
+    if (streq(args, "journal-test repeat-fault")) {
+        g_upgrade_fault_count = 0; g_upgrade_fault_write = 1320;
+        zinstall_handle("upgrade");
+        con_puts(g_upgrade_fault_count == g_upgrade_fault_write ?
+                 "zinstall: repeat fault injected\n" : "zinstall: repeat fault not reached\n");
+        g_upgrade_fault_write = 0;
+        return;
+    }
+    if (streq(args, "journal-test repeat-switch-fault")) {
+        g_upgrade_switch_fault = 1;
+        zinstall_handle("upgrade");
+        con_puts(g_upgrade_diag.stop && g_upgrade_diag.count == g_upgrade_diag.stop ?
+                 "zinstall: repeat switch fault injected\n" : "zinstall: repeat switch fault not reached\n");
+        g_upgrade_switch_fault = 0;
+        return;
+    }
+    if (streq(args, "journal-test repeat-marker-fault")) {
+        g_upgrade_marker_fault = 1;
+        zinstall_handle("upgrade");
+        con_puts(g_upgrade_marker_fault == 2 ? "zinstall: repeat marker fault injected\n" :
+                                              "zinstall: repeat marker fault not reached\n");
+        g_upgrade_marker_fault = 0;
+        return;
+    }
+    if (streq(args, "journal-test repeat-manifest-fault")) {
+        g_upgrade_manifest_fault = 1;
+        zinstall_handle("upgrade");
+        con_puts(g_upgrade_manifest_fault == 2 ? "zinstall: repeat manifest fault injected\n" :
+                                                "zinstall: repeat manifest fault not reached\n");
+        g_upgrade_manifest_fault = 0;
+        return;
+    }
+    if (streq(args, "journal-test recover")) { zupgrade_diagnostic("recover"); return; }
+    if (streq(args, "journal-test baseline")) { zupgrade_diagnostic("baseline"); return; }
+    if (streq(args, "journal-test baseline-index")) { zupgrade_diagnostic("baseline-index"); return; }
+    if (streq(args, "journal-test baseline-compare")) { zupgrade_diagnostic("baseline-compare"); return; }
+    if (streq(args, "journal-test compressed-compare")) { zupgrade_diagnostic("compressed-compare"); return; }
+    if (streq(args, "journal-test reclaim-start")) { zupgrade_diagnostic("reclaim-start"); return; }
+    if (streq(args, "journal-test reclaim-step")) { zupgrade_diagnostic("reclaim-step"); return; }
+    if (streq(args, "journal-test reclaim-interrupt")) { zupgrade_diagnostic("reclaim-interrupt"); return; }
+    if (streq(args, "journal-test reclaim-recover")) { zupgrade_diagnostic("reclaim-recover"); return; }
+    if (streq(args, "journal-test stage-bank")) { zupgrade_diagnostic("stage-bank"); return; }
+    if (streq(args, "journal-test interrupt-bank")) { zupgrade_diagnostic("interrupt-bank"); return; }
+    if (streq(args, "journal-test prepare-bank")) { zupgrade_diagnostic("prepare-bank"); return; }
+    if (streq(args, "journal-test publish-bank")) { zupgrade_diagnostic("publish-bank"); return; }
+    if (streq(args, "journal-test cancel-bank")) { zupgrade_diagnostic("cancel-bank"); return; }
+    if (streq(args, "journal-test interrupt")) { zupgrade_diagnostic("interrupt"); return; }
+    if (streq(args, "journal-test commit")) { zupgrade_diagnostic("commit"); return; }
+    if (streq(args, "journal-test stage-source")) { zupgrade_diagnostic("stage-source"); return; }
+    if (streq(args, "journal-test interrupt-source")) { zupgrade_diagnostic("interrupt-source"); return; }
+    if (streq(args, "journal-test stage-all")) { zupgrade_diagnostic("stage-all"); return; }
+    if (streq(args, "journal-test interrupt-all")) { zupgrade_diagnostic("interrupt-all"); return; }
+    if (streq(args, "journal-test switch")) { zupgrade_diagnostic("switch"); return; }
+    if (streq(args, "journal-test switch-pending")) { zupgrade_diagnostic("switch-pending"); return; }
+    if (streq(args, "journal-test interrupt-pending")) { zupgrade_diagnostic("interrupt-pending"); return; }
+    if (streq(args, "journal-test interrupt-switch")) { zupgrade_diagnostic("interrupt-switch"); return; }
+#endif
+    if (streq(args, "upgrade-check")) {
+        struct zeal_upgrade_target target;
+        if (!zeal_upgrade_preflight(zupgrade_read_target, NULL,
+                                    virtio_blk_full_capacity(), &target)) {
+            con_puts("zinstall: no recognized existing ARM64 installation; disk unchanged\n");
+            return;
+        }
+        con_puts(target.legacy ? "zinstall: recognized 128 MiB legacy installation; disk unchanged\n" :
+                                "zinstall: recognized expanded installation; disk unchanged\n");
+        return;
+    }
+#endif
+    if (streq(args, "target")) {
+        con_puts("Detected disk: PCI VirtIO, ");
+        zc_print_decimal(virtio_blk_full_capacity() / 2048);
+        con_puts(" MiB\n");
+        return;
+    }
+    if (streq(args, "begin ERASE")) {
+        if (zinstall_job_begin(virtio_blk_full_capacity(), virtio_blk_max_sectors()))
+            con_puts("zinstall: started; writing then verifying the selected disk\n");
+        else con_puts("zinstall: invalid layout or transfer window; no install started\n");
+        return;
+    }
     if (!streq(args, "ERASE")) {
-        con_puts("zinstall: ready; this erases the entire 128 MiB target disk. "
-                 "Type zinstall ERASE to confirm.\n");
+        con_puts("zinstall: ready; disk 0 - PCI VirtIO, capacity (MiB): ");
+        zc_print_decimal(virtio_blk_full_capacity() / 2048);
+        con_puts("\nThis erases all files on disk 0. Type zinstall ERASE to confirm.\n");
         return;
     }
 
@@ -15610,6 +16765,15 @@ static void zinstall_handle(const char *args) {
         con_puts("zinstall: invalid VirtIO transfer window; no install started\n");
         return;
     }
+    if (virtio_blk_full_capacity() > sectors) {
+        if (!zinstall_job_begin(virtio_blk_full_capacity(), max_batch)) {
+            con_puts("zinstall: invalid expanded layout; no install started\n");
+            return;
+        }
+        while (g_install_job.active) (void)zinstall_job_step();
+        return;
+    }
+    g_zbd.ready = 0;
     for (unsigned i = 0; i < sizeof(g_install_io); i++) g_install_io[i] = 0;
 
     con_puts("zinstall: erasing and installing 128 MiB; progress includes full read-back\n");
@@ -16009,7 +17173,7 @@ static void shell_handle(const char *line, int *done) {
 
     if (streq(line, "help")) {
 #ifndef ZEAL_PI_DIAG
-        con_puts("Native compiler: zcheck | zvol | zls | zgc | zedit <path> | zrm <path> | zverify <path> | zload /path.ZC | zput Name.ZC <source> | zrecv Name.ZC <bytes> <crc32> | zload disk:Name.ZC | zc <source> | zcall Function | zstatus | paudio | paudiobeep | zreset | zinstall [ERASE] (ISO only) | winmgr | gterm | gtermstop | winmgrstop | windowdemo | windowdemostop | fbquiet | fbshow\n");
+        con_puts("Native compiler: zcheck | zvol | zls | zgc | zedit <path> | zrm <path> | zverify <path> | zload /path.ZC | zput Name.ZC <source> | zrecv Name.ZC <bytes> <crc32> | zload disk:Name.ZC | zc <source> | zcall Function | zstatus | paudio | paudiobeep | zreset | zinstall | winmgr | gterm | gtermstop | winmgrstop | windowdemo | windowdemostop | fbquiet | fbshow\n");
         con_puts("Window test order: zreset -> zload /Kernel/KernelA.HH -> zload /Kernel/KernelB.HH\n");
         con_puts("  -> zload /Tests/WindowDragLive.ZC -> zcall WindowDragLiveStart; stop: zcall WindowDragLiveStop\n");
         con_puts("UTM window demo: windowdemo (drag/raise/resize; Ctrl+C exits) | windowdemostop\n");
@@ -17587,10 +18751,11 @@ int64_t zc_gui_shell_exec(int64_t *a) {
         command = "zstatus";
     if (streq(command, "help"))
         return (int64_t)(uintptr_t)
-            "Graphical commands: status (zstatus) | zvol | zls | zgc | zverify <path> | zload <path> | zput <name> <source> | zrm <name> | edit <path> | zc <source> | zcall <function> | zinstall [ERASE] (ISO only) | windowdemo | latticeplay | stockplay | paint\n"
+            "Graphical commands: status (zstatus) | zvol | zls | zgc | zverify <path> | zload <path> | zput <name> <source> | zrm <name> | edit <path> | zc <source> | zcall <function> | zinstall | windowdemo | latticeplay | stockplay | paint\n"
 #ifdef ZEAL_FORCE_PI4
             "Pi USB diagnostics: usbstatus | usbread (media remains read-only).\n"
             "Pi audio: paudio hdmi | paudio analog | paudio | phdmi.\n"
+            "Pi USB installer: zinstall, then zinstall ERASE SD.\n"
             "Pi SD: psdread (scan only) | psdopen (bind unique ZealOS data partition; enables bounded writes there).\n"
 #endif
             "OS menu: hold the pointer button, drag, then release on an item.\n"
@@ -17647,6 +18812,10 @@ int64_t zc_gui_shell_exec(int64_t *a) {
 }
 #endif
 
+#if defined(ZEAL_FORCE_PI4) && !defined(ZEAL_PI_DIAG)
+static const char *g_pi4_desktop_boot_failure;
+#endif
+
 static void shell_run(const struct zeal_handoff *h) {
     (void)h;
     /* Interactive by default: no auto-script, no timeout.
@@ -17661,6 +18830,10 @@ static void shell_run(const struct zeal_handoff *h) {
         g_fb_cx = 0;
         g_fb_cy = 0;
     }
+#if defined(ZEAL_FORCE_PI4) && !defined(ZEAL_PI_DIAG)
+    if (g_pi4_desktop_boot_failure)
+        con_puts(g_pi4_desktop_boot_failure);
+#endif
     con_puts("\nZealOS aarch64 shell (HolyC-IR exprs)\n");
     /* M152: short FB banner; full cmd list via `help` (800x600 wraps badly). */
     con_puts("type: help | vblk | rscatalog | runzc Notes.ZC | uartrx | halt\n");
@@ -20335,19 +21508,39 @@ static __attribute__((always_inline)) inline void native_desktop_start(const str
         zc_set_boot_time(-1, 0);
     zc_set_source_reader(zc_read_redsea);
 #ifdef ZEAL_FORCE_PI4
-    zc_set_file_writer(NULL); /* Ordinary SD writes require an explicit psdopen. */
-    zc_set_file_deleter(NULL); /* File deletion shares the same explicit opt-in. */
-    zc_set_source_writer(NULL); /* Explicit psdopen opts in after partition validation. */
+    zc_set_file_writer(NULL);
+    zc_set_file_deleter(NULL);
+    zc_set_source_writer(NULL);
+    if (!pi4_usb_installer_boot()) {
+        con_puts("Pi SD: opening prepared data partition at startup\n");
+        pi4_sdhci_card_open();
+    }
 #else
     zc_set_source_writer(zc_write_source);
 #endif
     zc_set_key_reader(zc_key_read, zc_key_reset);
     if (h->revision >= 4 &&
         h->size >= offsetof(struct zeal_handoff, boot_media_type) +
-                       sizeof(h->boot_media_type))
-        zc_set_boot_media(h->boot_media_type);
-    if (h->revision >= 3 && h->size >= offsetof(struct zeal_handoff, boot_media_type))
-        zc_init((void *)(uintptr_t)h->sources_virt, h->sources_size, con_puts);
+                       sizeof(h->boot_media_type)) {
+        uint32_t media_type = h->boot_media_type;
+#ifndef ZEAL_FORCE_PI4
+        /* UTM exposes an ISO attached over USB as a generic disk. */
+        if (g_install_image_size) media_type = 1;
+#endif
+        zc_set_boot_media(media_type);
+    }
+    if (h->revision >= 3 && h->size >= offsetof(struct zeal_handoff, boot_media_type)) {
+        const void *sources = (const void *)(uintptr_t)h->sources_virt;
+        uint64_t size = h->sources_size;
+#ifdef ZEAL_FORCE_PI4
+        const void *installed = pi4_installed_sources(&size);
+        if (installed) {
+            sources = installed;
+            con_puts("Pi SD: using installed source archive\n");
+        }
+#endif
+        zc_init(sources, size, con_puts);
+    }
 #ifdef ZEAL_FORCE_PI4
     con_puts("\nPI-DESKTOP-2: native ZealC / source graphics startup\n");
 #endif
@@ -20392,6 +21585,25 @@ void kernel_entry(const struct zeal_handoff *h) {
         g_install_image = (const uint8_t *)(uintptr_t)h->install_image_virt;
         g_install_image_size = h->install_image_size;
     }
+#ifndef ZEAL_FORCE_PI4
+    if (h->revision >= 10 &&
+        h->size >= offsetof(struct zeal_handoff, upgrade_sources_size) + sizeof(h->upgrade_sources_size)) {
+        g_upgrade_sources = (const uint8_t *)(uintptr_t)h->upgrade_sources_virt;
+        g_upgrade_sources_size = h->upgrade_sources_size;
+    }
+    if (h->revision >= 11 &&
+        h->size >= offsetof(struct zeal_handoff, upgrade_booter_size) + sizeof(h->upgrade_booter_size)) {
+        g_upgrade_kernel = (const uint8_t *)(uintptr_t)h->upgrade_kernel_virt;
+        g_upgrade_kernel_size = h->upgrade_kernel_size;
+        g_upgrade_booter = (const uint8_t *)(uintptr_t)h->upgrade_booter_virt;
+        g_upgrade_booter_size = h->upgrade_booter_size;
+    }
+    if (g_install_image_size && h->revision >= 3 &&
+        h->size >= offsetof(struct zeal_handoff, boot_media_type)) {
+        g_upgrade_new_tar = (const uint8_t *)(uintptr_t)h->sources_virt;
+        g_upgrade_new_tar_size = h->sources_size;
+    }
+#endif
 
     int is_pi = (h->flags & ZEAL_FLAG_PLAT_PI4) != 0;
 #ifdef ZEAL_FORCE_PI4
@@ -21605,17 +22817,17 @@ void kernel_entry(const struct zeal_handoff *h) {
                                     else
                                         con_puts("pi4-audio: PWM1 init failed; sound unavailable\n");
                                     con_puts("\nPI-DESKTOP-2: accepted Pi hardware startup\n");
-                                    input_poll(); /* Runs the accepted automatic USB probe. */
+                                    input_poll(); /* Starts native USB input. */
                                     pi4_usb_bus_report(1);
                                     if (!h->sources_virt || !h->sources_size)
-                                        con_puts("PI-DESKTOP-2: missing source archive; native desktop skipped\n");
-                                    else if (!pi4_usb_bus_keyboard_ready() ||
-                                             !pi4_usb_bus_pointer_ready())
-                                        con_puts("PI-DESKTOP-2: USB keyboard or pointer unavailable; native desktop skipped\n");
+                                        g_pi4_desktop_boot_failure = "Pi desktop: source archive missing.\n";
                                     else if (!pi4_desktop_prepare())
-                                        con_puts("PI-DESKTOP-2: unsupported framebuffer; use diagnostic recovery\n");
-                                    else
+                                        g_pi4_desktop_boot_failure = "Pi desktop: unsupported framebuffer.\n";
+                                    else {
                                         native_desktop_start(h);
+                                        if (!zc_gui_terminal_active())
+                                            g_pi4_desktop_boot_failure = "Pi desktop: graphical startup failed; see serial log.\n";
+                                    }
 #endif
                                     shell_run(h);
                                     for (;;) {
@@ -21648,6 +22860,9 @@ void kernel_entry(const struct zeal_handoff *h) {
         }
     }
 
+    /* Keep Pi hardware diagnostics on their existing path. */
+    int diagnostics = is_pi || (h->flags & ZEAL_FLAG_DIAGNOSTICS);
+    g_fb_console_quiet = !diagnostics;
     /* ---- QEMU / UTM virt path (full bring-up) ---- */
     fb_init(h);
 
@@ -21749,17 +22964,17 @@ void kernel_entry(const struct zeal_handoff *h) {
         }
     }
 
-    uart_puts(g_uart, "HolyC-IR → aarch64 JIT...\n");
-    if (jit_smoke() != 0) {
-        uart_puts(g_uart, "hc IR FAIL\n");
-        uart_puts(g_uart, "hc IR FAIL — halted (fix run-serial / check-serial)\n");
-        for (;;) {
-            __asm__ volatile("wfi");
+    if (diagnostics) {
+        uart_puts(g_uart, "HolyC-IR → aarch64 JIT...\n");
+        if (jit_smoke() != 0) {
+            uart_puts(g_uart, "hc IR FAIL — halted (fix run-serial / check-serial)\n");
+            for (;;) {
+                __asm__ volatile("wfi");
+            }
         }
+        (void)g_fb_guard;
+        fb_smoke(h);
     }
-
-    (void)g_fb_guard;
-    fb_smoke(h);
 
     if (!is_pi) {
         uart_puts(g_uart, "virtio-kbd: probe...\n");
@@ -21781,9 +22996,21 @@ void kernel_entry(const struct zeal_handoff *h) {
             uart_puts(g_uart, "virtio-tablet: none\n");
         }
         if (virtio_blk_init(h->hhdm_offset)) {
-            (void)zbd_bind_virtio();
+#if !defined(ZEAL_FORCE_PI4)
+#ifndef ZEAL_PI_DIAG
+            if (!g_install_image_size && !rsg_guest_recover())
+                for (;;) __asm__ volatile("wfi");
+#endif
+            if (!g_install_image_size && !zupgrade_diag_boot_publish())
+                for (;;) __asm__ volatile("wfi");
+#endif
+            /* The live installer must not mount an existing destination as
+             * its writable home/source store: desktop startup writes registry
+             * files before the user chooses whether to install or upgrade. */
+            if (!g_install_image_size)
+                (void)zbd_bind_virtio();
 #if !defined(ZEAL_PI_DIAG) && !defined(ZEAL_FORCE_PI4)
-            if (zc_enable_virtio_redsea_writes())
+            if (!g_install_image_size && zc_enable_virtio_redsea_writes())
                 uart_puts(g_uart, "virtio-blk: stock RedSea FileWrite/FileDel enabled\n");
 #endif
             uart_puts(g_uart, "virtio-blk: OK @ ");
@@ -21791,7 +23018,7 @@ void kernel_entry(const struct zeal_handoff *h) {
             uart_puts(g_uart, " cap=");
             uart_put_u64_hex(g_uart, virtio_blk_capacity());
             uart_puts(g_uart, g_vb.xport == VB_XPORT_PCI ? " pci\n" : " mmio\n");
-            uart_puts(g_uart, "virtio-blk: rw OK\n");
+            uart_puts(g_uart, "virtio-blk: ready (read-only probe)\n");
 #ifndef ZEAL_PI_DIAG
             uart_puts(g_uart, zss_available() ? "source-volume: ready\n" :
                                               "source-volume: none\n");
@@ -21827,10 +23054,12 @@ void kernel_entry(const struct zeal_handoff *h) {
         input_poll();
     }
 
-    bc_module_run(h);
+    if (diagnostics)
+        bc_module_run(h);
 #ifndef ZEAL_PI_DIAG
     native_desktop_start(h);
 #endif
+    g_fb_console_quiet = 0; /* Keep the fallback shell visible if startup fails. */
     shell_run(h);
 
     uart_puts(g_uart, "tablet clicks=");

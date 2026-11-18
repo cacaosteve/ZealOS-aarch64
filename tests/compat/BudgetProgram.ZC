@@ -8,6 +8,7 @@ I64 BudgetDataChecks()
     U8 *accounts = FileRead("/Apps/Budget/Accts.DD", &size);
     CDate date = Str2Date("02/29/2024");
     if (!accounts) return 1;
+    if (!DirMake("/Home/BudgetDataCheck")) { Free(accounts); return 1; }
     FileWrite("/Home/BudgetDataCheck/Accts.DD", accounts, size);
     Free(accounts);
     if (!Cd("/Home/BudgetDataCheck")) return 1;

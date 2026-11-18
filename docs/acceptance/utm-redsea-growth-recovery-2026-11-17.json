@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-17",
+  "scope": "Disposable QEMU UTM-compatible ARM64 disks; not physical UTM or Pi hardware",
+  "iso": "build/utm-parity-goal/redsea-growth-guest-final.iso",
+  "iso_sha256": "e6bd8d079e22d6ee4965672b74045052aa2ee0c9bf937584ca7e2d26c752ec75",
+  "results": [
+    "Root directory growth on 128 MiB and 1 GiB copies; six new files and existing Hello.TXT survive cold reboot.",
+    "Nested directory growth and existing/new file contents survive cold reboot.",
+    "Abrupt guest termination during an active growth journal, boot recovery, subsequent installer upgrade and another reboot preserve existing files on both sizes.",
+    "Host-injected torn writes at four installed boot and two installer recovery points on 1 GiB copies; Hello.TXT survives.",
+    "Host ownership, shared-journal interruption, and UTM admission checks passed; repeat upgrades passed on both disk sizes."
+  ],
+  "limitations": [
+    "Pi directory growth and its SD recovery path remain unsupported.",
+    "One long combined test session hit an allocator compiler-checkpoint error; isolated root growth passed, cause not established.",
+    "Actual UTM UI and physical power-loss behavior were not tested in this run."
+  ],
+  "logs": [
+    "build/utm-parity-goal/guest-root-final-results.log",
+    "build/utm-parity-goal/guest-growth-final-results.log",
+    "build/utm-parity-goal/guest-power-cut-final-results.log",
+    "build/utm-parity-goal/guest-growth-recovery-final-results.log",
+    "build/utm-parity-goal/growth-coordination-upgrades.log",
+    "build/utm-parity-goal/guest-growth-host-tests.log"
+  ]
+}

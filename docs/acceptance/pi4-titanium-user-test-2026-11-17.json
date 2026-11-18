@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-17",
+  "platform": "Physical Raspberry Pi 4B",
+  "image": "build/zealos-pi4b-titanium-2026-11-17.img",
+  "sha256": "8a2b8ec822ae03d3a1189ed6d5df6ba0c25968075cb4a8685198192953b90412",
+  "evidence": "User reported the Pi test was good after receiving boot, save, cold reboot, Titanium and optional audio test instructions.",
+  "flash": "The full image read-back matched the SHA-256 and the card was ejected; build/flash-pi-titanium-2026-11-17.log.",
+  "scope": "General user confirmation; individual steps and audio results were not separately reported."
+}

@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-15",
+  "platform": "Apple Silicon UTM",
+  "result": "PASS (manual, user confirmed)",
+  "vm": "ZealOS ARM64 Ed Fresh Test 1 GiB",
+  "vm_uuid": "5D0D7740-9DE2-4815-B81A-567C7BC7BD0A",
+  "iso": {
+    "path": "build/utm-parity-goal/stock-ed.iso",
+    "sha256": "f3bce602c9b78d8b22b6ebf0ec1c325c990c37c2d72257e64f615ee118ce9670"
+  },
+  "target": "Disposable 1 GiB PCI VirtIO disk",
+  "manual_checks": [
+    "User confirmed that the stock-style Ed(\"Hello.TXT\"); editor and saving after a reboot worked in the fresh UTM test VM."
+  ],
+  "evidence": {
+    "manual": "User confirmation in chat after the fresh disposable UTM install and reboot test",
+    "configuration": "UTM config shows only the VirtIO disk attached after CD removal",
+    "automated_companion_logs": [
+      "build/utm-parity-goal/stock-ed-relative-check.log",
+      "build/utm-parity-goal/stock-ed-fresh.log"
+    ]
+  },
+  "scope": "User-reported manual acceptance of editor opening and persistence; automated companion tests cover the editor document and fresh install. No additional live visual, audio, or upgrade claims are implied."
+}

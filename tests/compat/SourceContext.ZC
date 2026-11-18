@@ -142,9 +142,11 @@ I64 SourceContextTaskChecks()
 I64 SourceContextProjectChecks()
 {
     U8 *original = DirCur;
-    if (FileWrite("/Tests/ContextProject/Child/Leaf.ZC", "// leaf\n", 8) != 8 ||
-        FileWrite("/Tests/ContextProject/Load.ZC", "// load\n", 8) != 8 ||
-        FileWrite("/Tests/ContextProject/ContextProject.PRJ", "// proj\n", 8) != 8)
+    if (!DirMake("/Tests/ContextProject") ||
+        !DirMake("/Tests/ContextProject/Child") ||
+        FileWrite("/Tests/ContextProject/Child/Leaf.ZC", "// leaf\n", 8) <= 0 ||
+        FileWrite("/Tests/ContextProject/Load.ZC", "// load\n", 8) <= 0 ||
+        FileWrite("/Tests/ContextProject/ContextProject.PRJ", "// proj\n", 8) <= 0)
         return 1;
     if (!Cd("/Tests/ContextProject/Child")) return 2;
     if (!SourceContextPathIs(DirFile("Leaf.ZC", "Load", "ZC"),
@@ -175,8 +177,10 @@ I64 SourceContextDocLinkChecks()
     U8 *original = DirCur, *text = "relative document\n", *saved;
     CDoc *doc;
     I64 result = 42;
-    if (FileWrite("/Tests/ContextProject/Child/ReadMe.DD", text, StrLen(text)) != StrLen(text) ||
-        FileWrite("/Tests/ContextProject/Child/RelativeSibling.ZC", "// sibling\n", 11) != 11)
+    if (!DirMake("/Tests/ContextProject") ||
+        !DirMake("/Tests/ContextProject/Child") ||
+        FileWrite("/Tests/ContextProject/Child/ReadMe.DD", text, StrLen(text)) <= 0 ||
+        FileWrite("/Tests/ContextProject/Child/RelativeSibling.ZC", "// sibling\n", 11) <= 0)
         return 1;
     if (!Cd("/LICENSE")) return 2;
     doc = DocRead("/Tests/ContextProject/Child/ReadMe.DD");

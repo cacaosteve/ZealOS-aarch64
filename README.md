@@ -7,8 +7,8 @@ disk-only desktop boot and saved-data persistence milestone. Physical Pi 4B
 UEFI boots the native graphical terminals with working USB keyboard, pointer,
 menu clicks and `40+2;` returning `42`. The user has also confirmed Pi audio
 through HDMI and the headphone jack, though those listening tests were not tied
-to a recorded image hash. Writable Pi storage, persistence and installation
-remain work. See
+to a recorded image hash. The current 1 GiB Pi SD image passed a physical
+editor save and cold-reopen test. See
 [ACCEPTANCE.md](ACCEPTANCE.md) and [PI4.md](PI4.md).
 
 ## AArch64 desktop in UTM
@@ -65,6 +65,10 @@ make check-logic-program # original Digital Logic, prompt editing and recovery
 make check-budget-program # Budget forms, save/abort and cold-boot persistence
 make check-program-catalog # compile-only inventory of all Apps entry points
 make check-iso-installer-usb # USB CD install, disk-only boot and persistence
+python3 scripts/check-iso-installer.py --usb-cd --target-mib 1024 --guided --editor
+python3 scripts/check-installer-guards.py # undersized/multiple targets stay unchanged
+# Upgrade only the kernel in a disposable copy of an existing raw installation:
+python3 scripts/check-iso-installer.py --usb-cd --existing-disk /path/to/snapshot.img --existing-kernel build/kernel.elf
 make check-usb-input    # native NEC/QEMU xHCI keyboard, mouse/tablet + recovery
 make check-usb-topology # nested USB2 hubs, repeated reconnects + subtree recovery
 make check-pi4-platform # Pi FDT/DMA/xHCI, HID/storage and framebuffer adapter
@@ -201,10 +205,47 @@ Boot run-level flags now record the dedicated System task, persistent Registry,
 and Home startup only after each phase succeeds; the reboot checks wait for
 the graphical terminal to consume its queued `Once` command before asserting
 the persisted values and flushes.
-DVD boot opens the live graphical session. Its bounded UTM/QEMU installer
-accepts one 128 MiB PCI VirtIO target disk and requires the explicit
-`zinstall ERASE` confirmation; it writes the packaged GPT/ESP/source image and
-reads back every sector. It is separate from the legacy YDE installer, whose
+The UTM ISO automatically asks **Install onto hard drive (y or n)?**. Press
+**N** to try the live session or **Y** to open the installer. You can also open
+it later from **OS → Install ZealOS**. The guide displays the PCI VirtIO
+target and its capacity, then asks **Erase this disk and install ZealOS?**.
+Press **Y** to confirm or **N** to leave the disk unchanged.
+The installer accepts a single PCI VirtIO target of **128 MiB or larger**;
+multiple attached VirtIO targets are rejected to avoid erasing an ambiguous disk.
+It displays write/read-back progress and verifies every sector after flushing.
+After success, **Reboot Now** powers off the VM when you press **Y**. Detach
+the ISO in UTM, then start the VM from the installed disk. Press **N** to
+stay in the live session. The serial interface retains
+`zinstall` / `zinstall ERASE` for automation.
+
+The normal ISO is `build/zealos-aarch64-hello.iso`. Use `make iso-diagnostics`
+to build `build/zealos-aarch64-diagnostics.iso` with the boot regression and
+framebuffer tests enabled. `make check-serial` boots that diagnostic image.
+
+The Y/N installer ISO (SHA-256 `93ff5bed…`) passed manual Apple Silicon UTM
+testing on a blank 1 GiB VirtIO disk. Both prompts worked, read-back verification
+completed, and the saved file survived a disk-only restart.
+[Manual Y/N installer acceptance](docs/acceptance/utm-yn-installer-93ff5bed-2026-11-13.json)
+
+The previous guided installer ISO (SHA-256 `d9ffff52…`) is preserved as
+`build/zealos-aarch64-guided-d9ffff52.iso`.
+[The larger-disk acceptance record](docs/acceptance/utm-larger-disk-guided-installer-d9ffff52-2026-11-13.json)
+records fresh 1 GiB guided installation, fresh 128 MiB installation, and the
+new kernel on a copy of an existing 128 MiB installation with all 889 prior
+source files preserved. Checks include disk-only desktop boot, representative
+app execution, captured VirtIO audio, graphical editor save/reopen, and cold
+reboot persistence. These are automated QEMU/HVF checks with UTM-compatible
+devices. The user also confirmed installation, disk-only desktop boot and
+file persistence after restart in Apple Silicon UTM on 2026-11-13. This exact
+image has not been retested on Pi.
+
+For 128 MiB targets, the installer writes the packaged legacy image byte for
+byte. Larger targets retain the EFI partition and use the rest of the
+disk for a bounded ZealOS data partition, with RedSea followed by the two seeded
+32 MiB source banks (one active, one compaction shadow). Additional capacity is
+available for RedSea data; the source store remains 32 MiB. The current file provider supports files up to
+8 MiB. Existing installations are never expanded or reformatted merely by
+booting them. It is separate from the legacy YDE installer, whose
 BIOS/AHCI storage path is not ported. Disk/RAM startup also opens a second
 terminal and tiles it beside the first, excluding bridge/System tasks from the
 window layout. Startup queues autocomplete indexing after `Once`; the
@@ -272,8 +313,8 @@ passed in the automated guest gates. See [ACCEPTANCE.md](ACCEPTANCE.md).
 
 [COMPATIBILITY.md](COMPATIBILITY.md) describes the scope and remaining work.
 This does not boot the original upstream kernel and remains a scoped ARM64
-desktop/runtime port. It includes a bounded UTM/QEMU ISO installer for its
-128 MiB VirtIO disk image. Pi diagnostics remain a separate path.
+desktop/runtime port. It includes a guided UTM/QEMU ISO installer for PCI VirtIO disks of
+128 MiB and larger. Pi diagnostics remain a separate path.
 
 ## Status
 
@@ -335,14 +376,21 @@ USB diagnostic recovery entry. `make pi-image PI_FIRMWARE_ROOT=/path/to/copied-p
 builds a raw image with a 512 MiB FAT32 firmware/boot partition and an isolated
 ZealOS data partition; the image size defaults to 8 GiB and can be changed with
 `PI_IMAGE_SIZE_MIB`. It requires `mkfs.fat`, `mcopy`, and `mmd`, and never writes
-to a physical card. The Pi now has an explicit `psdopen` path that binds the
-ZealOS data partition and enables bounded SDHCI writes. The image builder
+to a physical card. The current Pi candidate automatically opens a validated
+ZealOS SD data partition at startup and enables bounded SDHCI writes; `psdopen`
+remains available for retry. Automatic startup and file persistence after a
+cold reboot passed a physical Pi 4B test on 2026-11-17
+([acceptance record](docs/acceptance/pi4-auto-sd-persistence-2026-11-17.json)). The image builder
 creates a full-size RedSea volume with `/Home` and `/Tmp`, and ordinary
 `FileWrite` create/replace plus `DirMake` use that volume. `.ZC` source saves
-remain in separate source banks. Delete, rename, and automatic directory
-growth are not implemented; physical Pi write/readback/cold-boot persistence
-still needs acceptance. See [the writable-storage status and layout](docs/PI4-WRITABLE-STORAGE.md).
+remain in separate source banks. File and bounded directory deletion are
+supported. File moves use copy followed by deletion; automatic directory growth
+is not implemented. See [the writable-storage status and layout](docs/PI4-WRITABLE-STORAGE.md)
+and [the physical editor persistence result](docs/acceptance/pi4-sd-editor-persistence-2026-11-15.json).
 A fresh card needs [pftf/RPi4](https://github.com/pftf/RPi4/releases).
+`make pi-usb-image PI_FIRMWARE_ROOT=/path/to/copied-pftf-boot` builds a live USB
+desktop that can install into a prepared SD data partition while preserving its
+FAT boot partition. See [the Pi 4B USB install steps](docs/PI4-WRITABLE-STORAGE.md#pi-4b-live-usb-installer).
 
 Bridge notes: [AIWNIOS.md](AIWNIOS.md). Milestone ladder: [upstream/README.md](upstream/README.md).
 
@@ -350,8 +398,8 @@ Bridge notes: [AIWNIOS.md](AIWNIOS.md). Milestone ladder: [upstream/README.md](u
 
 | Track | Status |
 |--|--|
-| QEMU/UTM virt | Current ISO `build/zealos-aarch64-hello.iso` (`9c5e90c9…`, also `build/zealos-aarch64-logic-prompt-fix.iso`) corrects Digital Logic's graphical prompt editing and fatal setup-abort path. Expanded NEC/VirtIO Logic, editor/save/reboot/reopen, Doodle/Mass Spring/Life and USB-CD install/persistence gates pass. The user confirmed the corrected-image live UTM retest works; its screenshot shows the expected AND circuit. The preserved `3b59782c…` image has live UTM acceptance for Doodle, Mass Spring and Life; `52c214c…` has live installer/desktop/persistence acceptance. See [ACCEPTANCE.md](ACCEPTANCE.md) and [PROGRAMS.md](PROGRAMS.md) for the remaining collection. |
-| Pi 4B UEFI | **PI-DESKTOP-2 native desktop/basic input accepted (2026-10-26)**: native graphical terminals, visible pointer movement, menu clicks and `40+2; → 42`. Physical USB reads and headphone-jack/HDMI0 audio have also been user-confirmed. Latest 8 GiB raw-image candidate includes a 512 MiB FAT32 UEFI boot partition and a RedSea data partition with `/Home`, `/Tmp`, and bounded normal file create/replace support. It is host-built and hash-recorded, but physical flash, SD write/read-back, cold-boot persistence, and broader RedSea operations remain open. See [the writable-storage plan](docs/PI4-WRITABLE-STORAGE.md) and its [candidate record](docs/acceptance/pi-raw-image-redsea-write-candidate-2026-11-12.json). |
+| QEMU/UTM virt | The preserved `build/zealos-aarch64-logic-prompt-fix.iso` (`9c5e90c9…`) corrects Digital Logic's graphical prompt editing and fatal setup-abort path. Expanded NEC/VirtIO Logic, editor/save/reboot/reopen, Doodle/Mass Spring/Life and USB-CD install/persistence gates pass. The user confirmed the corrected-image live UTM retest works; its screenshot shows the expected AND circuit. The preserved `3b59782c…` image has live UTM acceptance for Doodle, Mass Spring and Life; `52c214c…` has live installer/desktop/persistence acceptance. See [ACCEPTANCE.md](ACCEPTANCE.md) and [PROGRAMS.md](PROGRAMS.md) for the remaining collection. |
+| Pi 4B UEFI | **Physical editor save and cold reboot passed on the 1 GiB SD image (2026-11-15).** Native desktop input, physical USB reads and headphone-jack/HDMI0 audio were previously user-confirmed. See [the physical editor persistence result](docs/acceptance/pi4-sd-editor-persistence-2026-11-15.json) and [the writable-storage status](docs/PI4-WRITABLE-STORAGE.md). |
 
 ## Earlier platform follow-ups
 

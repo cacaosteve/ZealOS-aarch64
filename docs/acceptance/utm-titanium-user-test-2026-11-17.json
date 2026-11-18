@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-17",
+  "platform": "UTM ARM64, user-operated 1 GiB VirtIO VM",
+  "vm": "ZealOS ARM64 Titanium Release Test 1 GiB",
+  "iso": "build/utm-parity-goal/titanium-mesh-owner.iso",
+  "iso_sha256": "d199a982a4c02365cd568f51c6fed28f8922687ebb4335f664235b45db2527e8",
+  "evidence": "User-reported manual test",
+  "results": {
+    "installed_boot": "pass",
+    "saved_file_after_reboot": "pass",
+    "upgrade_and_file_after_reboot": "pass",
+    "titanium_screen_clears_after_exit": "pass; two runs"
+  },
+  "limits": [
+    "This record does not assert a physical Pi test or additional manual sound, application, or interruption-recovery tests."
+  ]
+}

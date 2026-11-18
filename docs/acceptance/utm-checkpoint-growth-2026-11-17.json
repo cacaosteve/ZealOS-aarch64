@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-17",
+  "scope": "QEMU ARM64 disposable disks; not physical UTM or Pi",
+  "iso": "build/utm-parity-goal/redsea-growth-checkpoint-fix.iso",
+  "iso_sha256": "baa5489c1cfca68369276c1992efe409b59ddb9da07d787d50b2e45787945ff7",
+  "cause": "A test declaration of I64 gr shadowed the graphics global; an unconditional global binding update and an untyped graphics bridge lookup could redirect graphics writes into an eight-byte allocation.",
+  "checks": [
+    "Combined file operations, original gr collision, graphics binding, root and nested growth, and cold-reboot file preservation passed.",
+    "Separate incompatible global redefinition and compatible deferred extern checks passed.",
+    "Installed-boot and installer recovery passed host-injected torn journal writes on 1 GiB copies.",
+    "A real guest power cut during journal writing, subsequent recovery, upgrade and file preservation passed on disposable 128 MiB and 1 GiB copies.",
+    "Host journal and admission checks passed; Pi desktop build and vendor patch verification passed."
+  ],
+  "logs": [
+    "build/utm-parity-goal/checkpoint-fix-combined.log",
+    "build/utm-parity-goal/checkpoint-global-results.log",
+    "build/utm-parity-goal/checkpoint-fix-recovery.log",
+    "build/utm-parity-goal/checkpoint-fix-interrupt.log",
+    "build/utm-parity-goal/checkpoint-fix-host.log",
+    "build/utm-parity-goal/checkpoint-fix-pi-build.log"
+  ],
+  "limitations": [
+    "Pi automatic directory growth remains unsupported; no physical Pi or UTM UI test was performed."
+  ]
+}

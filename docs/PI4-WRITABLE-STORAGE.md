@@ -1,5 +1,38 @@
 # Pi 4 writable storage plan
 
+## Directory growth and recovery — UTM
+
+`make check-redsea-growth-transaction` exercises an isolated host prototype
+that relocates root and nested directories using an already-owned undo journal.
+It tests rollback after failures and torn sector writes during relocation,
+rejects cross-links and cycles, and exercises a prototype for preserving the
+EFI commit record while borrowing the shared journal. A read-only UTM admission
+prototype checks recognized layouts and rejects pending upgrade state. The
+host-only `make check-redsea-growth-images` uses disposable 128 MiB and 1 GiB
+image copies and samples interruptions during writes and recovery; the 1 GiB
+fixture contains the user's preserved Hello.TXT and a prior EFI commit. These
+The UTM guest now uses these mechanisms for automatic directory growth. The
+installed system recovers a pending transaction before enabling disk writes,
+and the installer recovers it before using the shared EFI journal. Admission
+checks reject ambiguous ownership or an incompatible pending upgrade. Tests
+use disposable QEMU disk copies, including abrupt guest termination during a
+journal write and subsequent file preservation. Automatic directory growth
+remains unavailable on Pi; its SD recovery path is separate.
+
+## Automatic startup candidate — 2026-11-17
+
+The prepared microSD image now attempts to open its unique ZealOS data partition
+at startup, before desktop and source initialization. It checks card readiness,
+write protection, partition bounds, the source-bank headers, and the RedSea
+root before enabling the respective writers. If opening fails, the desktop
+continues with writers disabled; `psdopen` remains available for diagnosis or
+retry. The live USB installer does not automatically open its SD target.
+On 2026-11-17, the user confirmed on a physical Pi 4B that a file saved on
+the new image remained after a cold reboot without running `psdopen`.
+See the [automatic SD persistence acceptance](acceptance/pi4-auto-sd-persistence-2026-11-17.json).
+The 2026-11-15 physical pass below used explicit `psdopen`. Older notes below
+refer to that previous opt-in build where they conflict with this result.
+
 ## Current state
 
 - The Pi desktop build boots from the firmware-provided FAT boot volume and
@@ -9,8 +42,8 @@
   card, reads sector 0, and scans the primary partition table without writes.
   `psdopen` validates and binds the unique ZealOS data partition to the normal
   bounded block backend; it never runs at startup or formats storage. The PIO
-  sector write and flush path has host simulation coverage but still needs
-  physical Pi/card validation before routine use.
+  sector write and flush path has host simulation coverage and passed a
+  physical Pi 4B editor save and cold-reopen test on the 1 GiB SD image.
 - SDHCI clock, command, paired-register, R2 response, and CSD-capacity helpers
   have host tests. The driver derives the identification-clock divider from
   the advertised SDHCI base clock. These tests validate calculations, not the
@@ -48,8 +81,9 @@
   volume. Once the partition is explicitly bound, bounded RedSea
   `FileWrite` create/replace, regular-file `FileDel`, `DirMake`, empty-directory
   deletion, and recursive `DelTree` operations are available within existing
-  directory capacity. Rename and automatic directory growth are not
-  implemented. File and directory deletion tombstone their directory entry
+  directory capacity. The current bridge implements file moves through copy and
+  delete; automatic directory growth is not implemented. The move change has
+  not yet been verified on physical Pi hardware. File and directory deletion tombstone their directory entry
   and flush before freeing allocation bitmap sectors. A nonempty directory
   cannot be deleted directly; `DelTree` removes its contents first. If freeing
   fails, sectors leak rather than risking a live entry pointing at free space.
@@ -92,7 +126,7 @@ microSD. The builder does not touch a physical card.
 
 The image has two MBR partitions:
 
-1. A 512 MiB FAT32 partition (type `0xEF`) containing Pi firmware/UEFI boot
+1. A 512 MiB FAT32 partition (type `0x0C`) containing Pi firmware/UEFI boot
    files and the ZealOS boot payload.
 2. A ZealOS data partition (type `0xDA`) occupying the rest of the image. Its
    first region is reserved for RedSea; two 32 MiB append-only source banks
@@ -113,7 +147,10 @@ banks. Direct deletion refuses nonempty directories. Rename and automatic
 growth of a full directory are not enabled. Deletion tombstones and flushes
 the directory entry before returning allocated sectors to the bitmap, so later
 files remain discoverable and a failure during reclamation leaks space safely.
-The physical Pi write/readback/reboot persistence path still needs acceptance.
+The graphical editor save and cold-reopen test passed on physical Pi 4B
+on 2026-11-15. The user reopened `disk:/test.txt` after a cold reboot and
+confirmed that it still contained `hello pi`.
+[Image and test record](acceptance/pi4-sd-editor-persistence-2026-11-15.json).
 The FAT boot partition is outside the block-device write range.
 
 ### Physical-card acceptance
@@ -160,25 +197,66 @@ Flashing replaces the card's partition table and contents, so this is a fresh
 install operation rather than an in-place upgrade. Keep a backup before
 flashing a card with files you need.
 
-Do not use the existing UTM ISO as if it were a Pi optical disc. Pi firmware
-boots firmware-readable FAT partitions from SD or USB mass storage; it does
-not boot an ISO as a CD device. A future USB installer could boot from a
-mass-storage image and install to a separate target, but it needs a Pi
-bootable installer environment. The first release is simpler: flash a raw
-Pi `.img` with Raspberry Pi Imager. UTM continues to boot the ISO and run
-`zinstall ERASE` against its VirtIO disk.
+## Using one microSD card
 
-The image layout is not yet a finished end-user installer: it is a reproducible
-bring-up image with manual `psdopen` and incomplete ordinary filesystem
-operations. A later Pi-bootable USB installer could offer microSD as the
-destination, but it would be a UEFI/FAT boot environment, not the current UTM
-optical ISO. The current native writable backend targets the Pi SD controller
-and does not yet provide general writable USB-storage support.
+For an SD-only setup, flash the complete `pi-image` output to one microSD
+with Raspberry Pi Imager. Insert that card in the Pi's built-in slot and
+boot directly to the desktop. The current candidate attempts to enable
+persistent writes automatically. This first-time flash replaces the card's
+partition table and files.
 
-Do not resize or repartition the user's existing card in place as part of
-development. The current full-card FAT32 layout has no safe place for the
-data partition. A future migration utility would need a verified full-card
-backup and explicit confirmation before changing that layout.
+For the optional USB workflow, use a separate USB flash drive for the live
+image and leave the same microSD in the Pi's built-in slot. The USB installer
+can then refresh the prepared card's data partition while preserving its FAT
+boot partition. Remove the USB drive after installation to boot from SD.
+Both workflows use just one microSD card.
+
+## Pi 4B live USB installer
+
+Build the FAT-only USB image from a pftf/RPi4 firmware directory and the
+current Pi desktop payload.
+
+```sh
+make pi-usb-image PI_FIRMWARE_ROOT=/path/to/copied-pftf-boot
+```
+
+Flash `build/zealos-pi4b-usb.img` to a USB stick with Raspberry Pi Imager's
+**Use custom** option. The Pi EEPROM boot order must try USB mass storage
+before SD when both are present. Connect a supported USB keyboard and pointer.
+The default Limine entry starts the live desktop. Select the USB entry in
+UEFI if it presents both devices.
+
+The SD card must already have the Pi ZealOS firmware and desktop boot files
+on FAT and one dedicated ZealOS data partition, marked MBR type `0xDA` or
+the ZealOS GPT data type. A card made with `make pi-image` from this
+checkout has that layout and the desktop kernel that can load an installed
+archive. A FAT-only card needs a prepared target before this procedure.
+The data partition needs room for the source archive, RedSea metadata, and
+two 32 MiB source banks.
+
+In the live graphical terminal run `zinstall` to check the target and
+display its start LBA and sector count. Then run `zinstall ERASE SD` to
+replace the filesystem and source banks in that partition. The installer
+writes the live source archive to RedSea, initializes both source banks,
+reads back each written sector, and flushes before reporting success.
+All writes pass through the partition-relative backend. The operation
+preserves the partition table and the existing FAT firmware, bootloader,
+kernel, and bundled source archive.
+
+After `zinstall: SD data verified`, power off and remove the stick. The
+desktop kernel built from this checkout will use the installed archive on
+the next SD boot and enable the persistent data and source writers. Look
+for `Pi SD: using installed source archive` in the serial boot log. An
+older SD kernel will continue to use the source archive on FAT, so stage a
+compatible SD boot payload before the test if the existing kernel predates
+this feature. The installation itself only updates the data partition.
+
+Check `zput Tests/PiSDPersist.ZC I64 PiSDPersist(){return 40+2;}` in the
+desktop terminal, cold boot again and run `zload disk:Tests/PiSDPersist.ZC`
+followed by `zcall PiSDPersist`. Expect `0x2a`. For hardware acceptance,
+compare a before/after hash of the card's boot partition and partition table.
+The image build and partition-isolation tests run on the host. USB boot,
+native SD I/O and cold-boot persistence require a physical Pi 4B check.
 
 ## Implementation sequence
 

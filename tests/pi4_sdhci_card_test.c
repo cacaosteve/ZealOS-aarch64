@@ -47,8 +47,8 @@ static int fake_read32(void *context, unsigned offset, uint32_t *value) {
     }
     if (offset == PI4_SDHCI_CARD_REG_PRESENT_STATE) {
         *value = PI4_SDHCI_CARD_PRESENT_INSERTED |
-                 (fake->write_protected ?
-                  PI4_SDHCI_CARD_PRESENT_WRITE_PROTECT : 0u);
+                 (fake->write_protected ? 0u :
+                  PI4_SDHCI_CARD_PRESENT_WRITE_ENABLED);
         return 1;
     }
     if (offset == PI4_SDHCI_REG_DATA &&

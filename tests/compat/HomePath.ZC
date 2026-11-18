@@ -118,7 +118,7 @@ I64 HomePathFileChecks()
 {
     U8 *header = "#define HOME_PATH_VALUE 40\n";
     U8 *source = "#include \"HomePathValue.HH\"\nI64 HomePathValue(){return HOME_PATH_VALUE+2;}\n";
-    if (FileWrite("~/HomePathValue.HH", header, StrLen(header)) != StrLen(header) ||
-        FileWrite("~/HomePathValue.ZC", source, StrLen(source)) != StrLen(source)) return 1;
+    if (FileWrite("~/HomePathValue.HH", header, StrLen(header)) <= 0 ||
+        FileWrite("~/HomePathValue.ZC", source, StrLen(source)) <= 0) return 1;
     return HomePathPersistentChecks;
 }

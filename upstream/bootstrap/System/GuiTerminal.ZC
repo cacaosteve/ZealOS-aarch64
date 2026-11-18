@@ -129,9 +129,11 @@ U0 BootstrapGuiTerminalDocBottom(CDoc *doc=NULL)
 {//Place shell output/input at the document sentinel, even after a mouse click.
     if (!doc && !(doc = Fs->put_doc))
         return;
-    DocRecalc(doc, RECALCt_TO_SCREEN | RECALCF_HAS_CURSOR);
+    // Move first so a previously selected link cannot flash in the old
+    // cursor colors. Let WinMgr paint the resulting document in its frame.
     doc->cur_entry = doc;
     doc->cur_col = 0;
+    DocRecalc(doc, RECALCt_NORMAL | RECALCF_HAS_CURSOR);
 }
 
 I64 BootstrapGuiTerminalHistorySave(U8 *history, I64 *history_len,
@@ -311,7 +313,7 @@ Bool BootstrapGuiTerminalMenuBindLeaf(CMenuEntry *root, U8 *source_name,
                                       U8 *display_name, I64 action)
 {
     CMenuEntry *entry;
-    if (!root || !source_name || !display_name || action < 1 || action > 38)
+    if (!root || !source_name || !display_name || action < 1 || action > 39)
         return FALSE;
     entry = root->sub;
     while (entry)
@@ -357,7 +359,7 @@ U0 BootstrapGuiTerminalMenuInstall()
     BootstrapGuiTerminalMenuAppendRoot(menu, MenuNew("Apps { LatticePlay(); StockPlay(); PaintDemo(); NetOfDots(); Lines(); Doodle(); MassSpring(); Life(); Logic(); Budget(); Titanium(); Psalmody(); GrModels(); KeepAway(); Span(); Strut(); TimeClock(); ToTheFront(); Vocabulary(); XCaliber(); }"));
     BootstrapGuiTerminalMenuAppendRoot(menu, MenuNew("Games { Maze(); CharDemo(); }"));
     BootstrapGuiTerminalMenuAppendRoot(menu, MenuNew("View { ViewAngles(); ZoomIn(); ZoomOut(); ResetView(); PanLeft(); PanRight(); PanUp(); PanDown(); }"));
-    BootstrapGuiTerminalMenuAppendRoot(menu, MenuNew("OS { Help(); Status(); }"));
+    BootstrapGuiTerminalMenuAppendRoot(menu, MenuNew("OS { Help(); Status(); Install(); }"));
     CMenuEntry *file = BootstrapGuiTerminalMenuRoot(menu, "File");
     CMenuEntry *windows = BootstrapGuiTerminalMenuRoot(menu, "Windows");
     CMenuEntry *apps = BootstrapGuiTerminalMenuRoot(menu, "Apps");
@@ -404,7 +406,8 @@ U0 BootstrapGuiTerminalMenuInstall()
         !BootstrapGuiTerminalMenuBindLeaf(view, "PanUp", "Pan Up", 17) ||
         !BootstrapGuiTerminalMenuBindLeaf(view, "PanDown", "Pan Down", 18) ||
         !BootstrapGuiTerminalMenuBindLeaf(os, "Help", "Help", 1) ||
-        !BootstrapGuiTerminalMenuBindLeaf(os, "Status", "Status", 2))
+        !BootstrapGuiTerminalMenuBindLeaf(os, "Status", "Status", 2) ||
+        !BootstrapGuiTerminalMenuBindLeaf(os, "Install", "Install ZealOS", 39))
         throw('Menu');
     menu->attr = BLUE << 4 + YELLOW;
     menu->next = Fs->cur_menu;
@@ -712,8 +715,156 @@ U0 BootstrapGuiTerminalXCaliberRun()
     BootstrapGuiTerminalRunLightProgram("/Apps/X-Caliber/Run.ZC");
 }
 
+I64 bootstrap_gui_install_stage;
+
+Bool BootstrapGuiTerminalInstallPrompt()
+{//The optical boot prompt uses the pinned single-key Yes/No reader.
+    Bool install;
+    bootstrap_gui_install_stage = 5;
+    install = YorN;
+    bootstrap_gui_install_stage = 0;
+    return install;
+}
+
+U0 BootstrapGuiTerminalInstallOutput(U8 *output)
+{
+    if (!StrNCompare(output, "zinstall: ", 10))
+        output += 10;
+    BootstrapGuiTerminalPrintOutput(output, Fs);
+}
+
+U0 BootstrapGuiTerminalInstallHelp()
+{
+    CTask *help = User();
+    I64 half = TEXT_COLS / 2;
+    if (!TaskValidate(help))
+        return;
+    LBts(&help->win_inhibit, WIf_SELF_FOCUS);
+    DocClear(help->put_doc);
+    DocPrint(help->put_doc, "$$WW,1$$$$TX+CX,\"Installing ZealOS\"$$\n\n"
+        "The installer uses one PCI VirtIO disk. Check its capacity before confirming.\n\n"
+        "An existing installation can be upgraded while preserving your files.\n\n"
+        "A fresh installation erases the selected disk.\n\n"
+        "After verification, Reboot Now powers off the VM. Detach the ISO in UTM, "
+        "then start the VM from the installed disk.\n");
+    WinHorz(1, half - 1, Fs);
+    WinHorz(half + 1, TEXT_COLS - 2, help);
+    WinVert(2, TEXT_ROWS - 2, Fs);
+    WinVert(2, TEXT_ROWS - 2, help);
+    WinFocus(Fs);
+}
+
+U0 BootstrapGuiTerminalInstall()
+{
+    U8 *summary = ZcGuiShellExec("zinstall target");
+    if (!StrMatch("Detected disk:", summary))
+    {
+        BootstrapGuiTerminalInstallOutput(summary);
+        return;
+    }
+    // The shell output buffer can be reused when the help task starts.
+    BootstrapGuiTerminalInstallOutput(summary);
+    BootstrapGuiTerminalInstallHelp();
+    summary = ZcGuiShellExec("zinstall recovery");
+    BootstrapGuiTerminalInstallOutput(summary);
+    if (StrMatch("recovery failed", summary) || StrMatch("recovery check failed", summary))
+    {
+        bootstrap_gui_install_stage = -2;
+        Fs->new_answer = FALSE;
+        return;
+    }
+    summary = ZcGuiShellExec("zinstall upgrade-check");
+    if (StrMatch("recognized", summary) && !StrMatch("no recognized", summary))
+    {
+        bootstrap_gui_install_stage = 7;
+        DocPrint(DocPut, "\nUpgrade the existing ZealOS installation ");
+        if (YorN)
+        {
+            bootstrap_gui_install_stage = 8;
+            DocPrint(DocPut, "\nUpgrading; this can take several minutes.\nChecking the installation...\n");
+            Sleep(1);
+            summary = ZcGuiShellExec("zinstall upgrade-begin");
+            if (StrMatch("upgrade started", summary))
+            {
+                DocPrint(DocPut, "Preparing disk space and preserving files...\n");
+                Sleep(1);
+                summary = ZcGuiShellExec("zinstall upgrade-step");
+                if (StrMatch("disk preparation complete", summary))
+                {
+                    DocPrint(DocPut, "Preparing system files...\n");
+                    Sleep(1);
+                    summary = ZcGuiShellExec("zinstall upgrade-step");
+                    if (StrMatch("system files prepared", summary))
+                    {
+                        DocPrint(DocPut, "Writing and verifying boot files...\n");
+                        Sleep(1);
+                        summary = ZcGuiShellExec("zinstall upgrade-step");
+                    }
+                }
+            }
+            BootstrapGuiTerminalInstallOutput(summary);
+            if (StrMatch("upgrade complete", summary))
+            {
+                DocPrint(DocPut, "\nUpgrade complete. Detach the ISO after power off.\nReboot Now ");
+                bootstrap_gui_install_stage = 6;
+                if (YorN)
+                    BootstrapGuiTerminalInstallOutput(ZcGuiShellExec("zinstall finish"));
+                bootstrap_gui_install_stage = 4;
+            }
+            else
+                bootstrap_gui_install_stage = -2;
+            Fs->new_answer = FALSE;
+            return;
+        }
+    }
+    bootstrap_gui_install_stage = 2;
+    DocPrint(DocPut, "\nAll files on this disk will be lost.\n"
+                    "Erase this disk and install ZealOS ");
+    if (!YorN)
+    {
+        bootstrap_gui_install_stage = -1;
+        DocPrint(DocPut, "Installation cancelled; disk unchanged.\n");
+        Fs->new_answer = FALSE;
+        return;
+    }
+    summary = ZcGuiShellExec("zinstall begin ERASE");
+    BootstrapGuiTerminalInstallOutput(summary);
+    if (!StrMatch("zinstall: started;", summary))
+    {
+        bootstrap_gui_install_stage = -2;
+        return;
+    }
+    bootstrap_gui_install_stage = 3;
+    while (bootstrap_gui_install_stage == 3)
+    {
+        summary = ZcGuiShellExec("zinstall step");
+        if (StrMatch("installed and fully read-back verified", summary))
+            bootstrap_gui_install_stage = 4;
+        else if (StrMatch("failed", summary) || StrMatch("no active", summary))
+            bootstrap_gui_install_stage = -2;
+        if (bootstrap_gui_install_stage != 4 && StrCompare(summary, "\n"))
+            BootstrapGuiTerminalInstallOutput(summary);
+        Sleep(1);
+    }
+    if (bootstrap_gui_install_stage == 4)
+    {
+        DocPrint(DocPut, "\nInstallation verified. Detach the ISO after power off, then start the VM.\n"
+                        "Reboot Now ");
+        bootstrap_gui_install_stage = 6;
+        if (YorN)
+            BootstrapGuiTerminalInstallOutput(ZcGuiShellExec("zinstall finish"));
+        bootstrap_gui_install_stage = 4;
+    }
+    Fs->new_answer = FALSE;
+}
+
 U8 *BootstrapGuiTerminalMenuAction(I64 action)
 {
+    if (action == 39)
+    {
+        BootstrapGuiTerminalInstall();
+        return NULL;
+    }
     if (action == 1)
         return ZcGuiShellExec("help");
     if (action == 2)
@@ -852,7 +1003,8 @@ U0 BootstrapGuiTerminalPaintDraw(CDC *dc)
     for (i = 0; i < bootstrap_gui_paint_count; i++)
         if (BootstrapWinPixelVisible(task, bootstrap_gui_paint_x[i],
                                      bootstrap_gui_paint_y[i]))
-            GrPlot(dc, bootstrap_gui_paint_x[i], bootstrap_gui_paint_y[i]);
+            BootstrapGraphPixelAt(dc, bootstrap_gui_paint_x[i],
+                                  bootstrap_gui_paint_y[i], TRUE);
     dc->color.c0 = old_color;
 }
 
@@ -1049,6 +1201,8 @@ U8 *BootstrapGuiTerminalReadLine2(Bool continuation)
                                 bootstrap_gui_terminal_editor_active = FALSE;
                             }
                         }
+                        else if (!StrCompare(command, "zinstall"))
+                            BootstrapGuiTerminalInstall();
                         else
                         {
                             if (!BootstrapGuiTerminalPaintCommand(command,
@@ -1191,19 +1345,15 @@ I64 BootstrapGuiTerminalDevicesInit()
 
 U0 BootstrapGuiTerminalUserStartUp()
 {//HomeSys owns the standard document/window setup; retain the accepted input.
+    Fs->text_attr = (WHITE << 4) | BLUE;
     BootstrapHomeUserStartUp;
     // The source volume has no CDrive yet to supply its normal border color.
     if (!Fs->cur_dv)
-        Fs->border_attr = CYAN;
+        Fs->border_attr = (LTBLUE << 4) | BLACK;
     BootstrapGuiTerminalRegister;
     BootstrapGuiTerminalMenuInstall;
-    // The welcome document changes foreground attributes. Give command input
-    // the accepted white-on-black appearance after inserting that document.
-    DocPrint(DocPut, "$$FG,WHITE$$$$BG,BLACK$$");
-    DocPrint(DocPut, "ZealOS ARM64 graphical terminal\n");
-    DocPrint(DocPut, "Edit with Left/Right, Home/End, Backspace and Delete.\n");
-    DocPrint(DocPut, "Up recalls the last command; Down clears it.\n");
-    DocPrint(DocPut, "ZealC runs directly; help lists bootstrap commands.\n");
+    // Reset the welcome document colors to the terminal defaults.
+    DocPrint(DocPut, "$$FG$$$$BG$$");
     ZcUserPromptSet(&BootstrapGuiTerminalReadLine);
     ZcUserOutputSet(&BootstrapGuiTerminalPrintOutput);
 }
@@ -1226,8 +1376,14 @@ U0 BootstrapGuiTerminalTileHomeWindows(CTask *first, CTask *second)
 {//Tile only the two user terminals; bridge/System tasks are not desktop windows.
     I64 half = TEXT_COLS / 2;
 
-    if (!TaskValidate(first) || !TaskValidate(second) || half < 4)
+    if (!TaskValidate(first) || half < 4)
         return;
+    if (!TaskValidate(second))
+    {
+        WinHorz(1, TEXT_COLS - 2, first);
+        WinVert(2, TEXT_ROWS - 2, first);
+        return;
+    }
     WinHorz(1, half - 1, first);
     WinHorz(half + 1, TEXT_COLS - 2, second);
     WinVert(2, TEXT_ROWS - 2, first);
@@ -1261,8 +1417,7 @@ I64 BootstrapGuiTerminalHomeStart()
     // Execute the startup body extracted from pinned HomeSys.ZC. Its ARM64
     // overlay reuses the already-running first terminal and queues scheduler-
     // dependent commands there instead of issuing them from the C boot stack.
-    // The DVD Once overlay opens a live session and explains that installation
-    // is not yet supported on ARM64.
+    // The DVD Once overlay confirms whether to open the ARM64 installer.
     if (ZcSourceHasOverride("/Home/HomeSys.ZC"))
     {
         initial = bootstrap_gui_terminal_task;
@@ -1298,6 +1453,95 @@ U0 BootstrapGuiTerminalTask(U8 *data)
     UserCmdLine;
 }
 
+extern Bool ZcBootClockAvailable();
+
+I64 BootstrapStatusText(U32 *row, I64 column, I64 attr, U8 *label)
+{
+    while (column < TEXT_COLS && *label)
+        row[column++] = attr | *label++;
+    return column;
+}
+
+U0 BootstrapDesktopStatusDraw(CDC *dc)
+{//Stock WallPaper status, backed by the ARM64 clock and guest counters.
+    CGrGlobals *graphics = ZcActiveGrGlobals();
+    CWinMgrGlobals *manager = ZcActiveWinMgrGlobals();
+    CDateStruct date;
+    I64 available, column, i, start, color, old_color;
+    U8 boot_source = '?', prefix[STR_LEN], values[STR_LEN], *key_name;
+    U32 row[TEXT_COLS];
+    I64 normal = ((DKGRAY << 4) | WHITE) << 8;
+    I64 accent = ((DKGRAY << 4) | LTGREEN) << 8;
+    I64 yellow = ((DKGRAY << 4) | YELLOW) << 8;
+
+    if (!dc || !manager || !graphics || graphics->fp_wall_paper != &BootstrapWinPaper ||
+        manager->show_menu)
+        return;
+    for (i = 0; i < TEXT_COLS; i++)
+        row[i] = normal | CH_SPACE;
+    if (ZcBootClockAvailable())
+    {
+        NowDateTimeStruct(&date);
+        StrPrint(prefix, " %c %3tZ %02d/%02d/%02d %02d:%02d:%02d",
+                 240, date.day_of_week, "ST_DAYS_OF_WEEK", date.mon, date.day_of_mon,
+                 date.year % 100, date.hour, date.min, date.sec);
+    }
+    else
+        StrPrint(prefix, " %c -- --/--/-- --:--:--", 240);
+    available = sys_code_bp->alloced_u8s - sys_code_bp->used_u8s;
+    if (sys_data_bp)
+        available += sys_data_bp->alloced_u8s - sys_data_bp->used_u8s;
+    StrPrint(values, "%s FPS:%2d RAM:%010X CPU:", prefix, ToI64(manager->fps), available);
+    column = BootstrapStatusText(row, 0, normal, values);
+    StrPrint(values, "%2d", ToI64(100.0 * (1.0 - cpu_structs[0].idle_factor)));
+    column = BootstrapStatusText(row, column, yellow, values);
+    if (sys_boot_src.u8[0] == BOOT_SRC_HARDDRIVE)
+        boot_source = 'H';
+    else if (sys_boot_src.u8[0] == BOOT_SRC_DVD)
+        boot_source = 'D';
+    else if (sys_boot_src.u8[0] == BOOT_SRC_RAM)
+        boot_source = 'R';
+    column = BootstrapStatusText(row, column, normal, " BOOT:");
+    StrPrint(values, "%c", boot_source);
+    column = BootstrapStatusText(row, column, accent, values);
+    column = BootstrapStatusText(row, column, normal, " RES:");
+    StrPrint(values, "%dx%d", sys_framebuffer_width, sys_framebuffer_height);
+    column = BootstrapStatusText(row, column, accent, values);
+    column = BootstrapStatusText(row, column, normal, " OS:");
+    StrPrint(values, "V%.02f.%d", sys_os_version, sys_os_version_sub);
+    column = BootstrapStatusText(row, column, accent, values);
+    if (kbd.last_down_scan_code && (key_name = ScanCode2KeyName(kbd.last_down_scan_code)))
+    {
+        start = TEXT_COLS - StrLen(key_name);
+        if (start > column)
+            BootstrapStatusText(row, start, yellow, key_name);
+        Free(key_name);
+    }
+    // Paint after the source compositor has refreshed the manager background.
+    // Clip each run to exposed cells so the splash and full-screen apps own row 0.
+    old_color = dc->color.c0;
+    for (i = 0; i < TEXT_COLS;)
+    {
+        while (i < TEXT_COLS && graphics->win_z_buf[i])
+            i++;
+        if (i == TEXT_COLS)
+            break;
+        start = i;
+        color = row[i] & 0x0F00;
+        while (i < TEXT_COLS && !graphics->win_z_buf[i] && (row[i] & 0x0F00) == color)
+        {
+            values[i - start] = row[i];
+            i++;
+        }
+        values[i - start] = 0;
+        dc->color.c0 = DKGRAY;
+        GrRect(dc, start * FONT_WIDTH, 0, (i - start) * FONT_WIDTH, FONT_HEIGHT);
+        dc->color.c0 = color >> 8;
+        GrPrint(dc, start * FONT_WIDTH, 0, "%s", values);
+    }
+    dc->color.c0 = old_color;
+}
+
 U0 BootstrapGuiTerminalFinalUpdate(CDC *dc)
 {//Paint the insertion caret after the source compositor's window redraws.
     CTask *term = sys_focus_task;
@@ -1320,6 +1564,7 @@ U0 BootstrapGuiTerminalFinalUpdate(CDC *dc)
             dc->color.c0 = old_color;
         }
     }
+    BootstrapDesktopStatusDraw(dc);
     // Preserve the source menu/progress/mouse overlay, with the pointer last.
     if (bootstrap_gui_terminal_final_update)
         (*bootstrap_gui_terminal_final_update)(dc);
@@ -1534,9 +1779,9 @@ I64 BootstrapGuiTerminalPaintChecks()
     I64 old_x, old_y;
     I64 old_pixel, old_flags;
     Bool old_lb, old_active;
-    I64 x, y;
+    I64 x, y, result;
     if (!TaskValidate(task) || !active_mouse || !active_gr ||
-        !(dc = active_gr->dc) || !dc->body || dc->width_internal <= 0 ||
+        !(dc = active_gr->dc2) || !dc->body || dc->width_internal <= 0 ||
         dc->height <= 0)
         return 1;
     old_x = active_mouse->pos.x;
@@ -1544,8 +1789,8 @@ I64 BootstrapGuiTerminalPaintChecks()
     old_lb = active_mouse->lb;
     old_active = bootstrap_gui_paint_active;
     x = task->pix_left + 16;
-    y = task->pix_top + 16;
-    if (x < 0 || x >= dc->width_internal || y < 0 || y >= dc->height)
+    y = task->pix_bottom - 16;
+    if (x < 0 || x + 5 >= dc->width || y < 0 || y + 3 >= dc->height)
         return 1;
     old_pixel = dc->body[y * dc->width_internal + x];
     old_flags = dc->flags;
@@ -1556,15 +1801,18 @@ I64 BootstrapGuiTerminalPaintChecks()
     active_mouse->pos.x = x;
     active_mouse->pos.y = y;
     active_mouse->lb = TRUE;
+    result = 2;
     BootstrapGuiTerminalPaintSample;
     if (bootstrap_gui_paint_count != 1 ||
         bootstrap_gui_paint_x[0] != x || bootstrap_gui_paint_y[0] != y)
         goto fail;
+    result = 3;
     BootstrapGuiTerminalPaintSample;
     if (bootstrap_gui_paint_count != 1)
         goto fail;
     active_mouse->pos.x = x + 5;
     active_mouse->pos.y = y + 3;
+    result = 4;
     BootstrapGuiTerminalPaintSample;
     if (bootstrap_gui_paint_count < 6 ||
         bootstrap_gui_paint_x[bootstrap_gui_paint_count - 1] != x + 5 ||
@@ -1573,19 +1821,22 @@ I64 BootstrapGuiTerminalPaintChecks()
     bootstrap_gui_paint_count = 1;
     bootstrap_gui_paint_x[0] = x;
     bootstrap_gui_paint_y[0] = y;
+    active_mouse->lb = FALSE;
+    result = 5;
     BootstrapGuiTerminalPaintDraw(dc);
     if (dc->body[y * dc->width_internal + x] != YELLOW)
         goto fail;
     StrCopy(command, "pending command");
     dc->body[y * dc->width_internal + x] = old_pixel;
+    result = 6;
     if (!BootstrapGuiTerminalPaintEscape(command, &command_len,
                                           &command_pos, &overflow) ||
         command[0] || command_len || command_pos || overflow ||
         bootstrap_gui_paint_active || bootstrap_gui_paint_count ||
         bootstrap_gui_paint_have_last)
         goto fail;
-    active_mouse->lb = FALSE;
     BootstrapGuiTerminalPaintSample;
+    result = 7;
     BootstrapGuiTerminalPaintDraw(dc);
     if (bootstrap_gui_paint_have_last ||
         dc->body[y * dc->width_internal + x] != old_pixel)
@@ -1608,7 +1859,7 @@ fail:
     bootstrap_gui_paint_active = old_active;
     bootstrap_gui_paint_count = 0;
     bootstrap_gui_paint_have_last = FALSE;
-    return 2;
+    return result;
 }
 
 I64 BootstrapGuiTerminalOutputOwnershipChecks()
@@ -1619,8 +1870,9 @@ I64 BootstrapGuiTerminalOutputOwnershipChecks()
     CTask *candidate;
     CDoc *terminal_doc, *source_doc;
     CDoc *old_source_doc;
-    CDocEntryBase *terminal_last, *source_last;
-    I64 terminal_updates, source_updates;
+    CDocEntryBase *source_last;
+    U8 *before, *after;
+    Bool passed;
 
     if (!TaskValidate(terminal) || !(terminal_doc = terminal->put_doc))
         return 1;
@@ -1647,10 +1899,8 @@ I64 BootstrapGuiTerminalOutputOwnershipChecks()
     if (source_doc == terminal_doc)
         return 23;
 
-    terminal_last = terminal_doc->head.last;
-    terminal_updates = terminal_doc->updates_count;
+    before = DocSave(terminal_doc);
     source_last = source_doc->head.last;
-    source_updates = source_doc->updates_count;
     old_source_doc = source_task->put_doc;
     source_task->put_doc = source_doc;
     Fs = source_task;
@@ -1658,12 +1908,16 @@ I64 BootstrapGuiTerminalOutputOwnershipChecks()
     Fs = old_fs;
     source_task->put_doc = old_source_doc;
 
-    if (source_doc->head.last != source_last ||
-        source_doc->updates_count != source_updates ||
-        terminal_doc->head.last == terminal_last ||
-        terminal_doc->updates_count <= terminal_updates)
-        return 3;
-    return 0x2a;
+    // The frame counter can stay unchanged while the prompt receives output.
+    after = DocSave(terminal_doc);
+    passed = source_doc->head.last == source_last && before && after &&
+             StrCompare(before, after) && StrMatch("GUI output ownership check", after);
+    Free(before);
+    Free(after);
+    DocDel(source_doc);
+    if (passed)
+        return 0x2a;
+    return 3;
 }
 
 I64 BootstrapGuiTerminalHide()
@@ -1830,7 +2084,8 @@ I64 BootstrapGuiTerminalSmoke()
             !BootstrapGuiTerminalMenuActionValid(menu, "View", "Pan Up", 17) ||
             !BootstrapGuiTerminalMenuActionValid(menu, "View", "Pan Down", 18) ||
             !BootstrapGuiTerminalMenuActionValid(menu, "OS", "Help", 1) ||
-            !BootstrapGuiTerminalMenuActionValid(menu, "OS", "Status", 2))
+            !BootstrapGuiTerminalMenuActionValid(menu, "OS", "Status", 2) ||
+            !BootstrapGuiTerminalMenuActionValid(menu, "OS", "Install ZealOS", 39))
             return 73;
         output = BootstrapGuiTerminalMenuSource(27);
         if (!output || StrCompare(output,

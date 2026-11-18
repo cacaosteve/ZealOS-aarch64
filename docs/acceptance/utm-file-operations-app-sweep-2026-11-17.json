@@ -1,0 +1,41 @@
+{
+  "date": "2026-11-17",
+  "platform": "QEMU/HVF, UTM-targeted ARM64 installed disk",
+  "iso": "build/utm-parity-goal/file-operations-current.iso",
+  "iso_sha256": "25fa5f5cf087781f91aa39a5ee96f8889c91d38b5cab04c62d7da4d754a7bf3f",
+  "file_tests": {
+    "result": "PASS",
+    "scope": "Disposable stock RedSea: create, delete, directory operations, copy-then-delete move, case-only move rejection, block file close, and file data after cold reboot.",
+    "log": "build/utm-parity-goal/file-ops-block-redsea-result.log",
+    "limitations": "Automatic directory growth remains unimplemented; moves are not atomic and cannot rename directories."
+  },
+  "app_compile": {
+    "result": "PASS",
+    "sources_compiled": 70,
+    "sources_total": 70,
+    "normal_loaders": [
+      "ToTheFront",
+      "X-Caliber"
+    ],
+    "catalog": "build/utm-parity-goal/file-operations-app-catalog.json",
+    "scope": "Compile-only; not all program behaviors."
+  },
+  "runtime": {
+    "final_build": [
+      "GrModels",
+      "KeepAway",
+      "Titanium",
+      "Mass Spring",
+      "Doodle",
+      "Game of Life",
+      "TicTacToe",
+      "MathAudioDemo",
+      "PredatorPrey"
+    ],
+    "logs": [
+      "build/utm-parity-goal/current-3d-retry.log",
+      "build/utm-parity-goal/current-stock-interactive.log"
+    ],
+    "note": "An earlier 3D run failed to select the model; a final-build retry passed. Separate earlier-candidate runtime passes cover Logic, Budget, TimeClock, Span, Strut, ToTheFront, X-Caliber, Vocabulary, and Psalmody."
+  }
+}

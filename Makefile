@@ -76,6 +76,10 @@ LDFLAGS_KERNEL := $(LLD_FLAG) -nostdlib -static -Wl,-pie \
 BOOT_OBJS   := $(BUILD)/zealbooter.o
 KERNEL_OBJS := $(BUILD)/kernel_stub.o $(BUILD)/hc_f64math.o $(BUILD)/vectors.o
 
+# The storage and installer implementations are included directly by the
+# kernel. Rebuild every platform variant when one of those headers changes.
+STORAGE_HEADERS := $(wildcard src/efi_*.h src/redsea_*.h src/upgrade_*.h src/source_upgrade_*.h src/lz4_*.h src/install_layout.h src/pi4_sd_install.h)
+
 QEMU       ?= qemu-system-aarch64
 FW_CODE    ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
 FW_VARS_IN ?= /opt/homebrew/share/qemu/edk2-arm-vars.fd
@@ -100,6 +104,8 @@ ESP_SECTORS      := $(shell echo $$(($(ESP_END_SECTOR) - $(ESP_START_SECTOR) + 1
 .PHONY: all clean esp iso run run-serial check-serial check-page-tables check-pi4-pcie-fdt check-pi4-pcie-cfg check-pi4-dma check-pi4-xhci-probe check-pi4-xhci-dma check-pi4-platform check-block-device check-window-buttons check-sprite-arrow-symmetry check-doced-popup check-docfile-persistence check-time-format check-timeclock check-compare-chains run-iso run-pci utm pi-sd pi-diag
 
 all: $(BOOT) $(KERNEL) iso esp
+
+$(BUILD)/kernel_stub.o $(BUILD)/kernel_stub-pi.o $(BUILD)/kernel_stub-pi-desktop.o: $(STORAGE_HEADERS) $(BUILD)/tosutf8lite_zc.h
 
 include src/zc/build.mk
 KERNEL_OBJS += $(ZC_OBJS)
@@ -132,7 +138,7 @@ check-compare-chains: all
 $(BUILD):
 	mkdir -p $@
 
-$(BUILD)/zealbooter.o: src/zealbooter.c src/handoff.h src/elf64.h src/plat_pi4.h src/pi4_pcie_fdt.h src/pi4_dma.h src/mmio_map.h src/linker-booter.ld | $(BUILD)
+$(BUILD)/zealbooter.o: src/zealbooter.c src/lz4_archive.h src/lz4_block.h src/handoff.h src/elf64.h src/plat_pi4.h src/pi4_pcie_fdt.h src/pi4_dma.h src/mmio_map.h src/linker-booter.ld | $(BUILD)
 	$(CLANG) $(CFLAGS) -c src/zealbooter.c -o $@
 
 $(BUILD)/kernel_stub.o: src/kernel_stub.c src/zc/runtime.h Makefile src/handoff.h src/plat_pi4.h src/hc_ir.h src/hc_front.h src/a64_emit.h src/fb_font.h src/virtio_kbd.h src/virtio_tablet.h src/virtio_blk.h src/virtio_net.h src/virtio_snd.h src/usb_input.h src/usb_xhci.h src/usb_hid.h src/usb_platform.h src/zc_source_store.h src/zc_source_editor.h src/disk_layout.h src/mmio_map.h src/pi4_dma_probe.h src/pi4_xhci_probe.h src/pi4_xhci_dma_probe.h src/pi4_usb_keyboard.h $(BUILD)/netofdots_zc.h $(BUILD)/lines_zc.h $(BUILD)/minigr_zc.h $(BUILD)/memsort_zc.h $(BUILD)/peekplot_zc.h $(BUILD)/offbmp_zc.h $(BUILD)/heapstr_zc.h $(BUILD)/catfmt_zc.h $(BUILD)/heapque_zc.h $(BUILD)/jobque_zc.h $(BUILD)/jobrun_zc.h $(BUILD)/taskspawn_zc.h $(BUILD)/popup_zc.h $(BUILD)/doclite_zc.h $(BUILD)/doclib_zc.h $(BUILD)/notes_zc.h $(BUILD)/globshare_zc.h $(BUILD)/life_zc.h $(BUILD)/cartlite_zc.h $(BUILD)/vec2lite_zc.h $(BUILD)/angleslite_zc.h $(BUILD)/coslite_zc.h $(BUILD)/sqrtlite_zc.h $(BUILD)/arglite_zc.h $(BUILD)/commalite_zc.h $(BUILD)/colorlite_zc.h $(BUILD)/plot3lite_zc.h $(BUILD)/tospilite_zc.h $(BUILD)/turtlelite_zc.h $(BUILD)/filllite_zc.h $(BUILD)/initlite_zc.h $(BUILD)/deflite_zc.h $(BUILD)/printlite_zc.h $(BUILD)/msglite_zc.h $(BUILD)/menulite_zc.h $(BUILD)/findlite_zc.h $(BUILD)/fslite_zc.h $(BUILD)/setuplite_zc.h $(BUILD)/ttlite_zc.h $(BUILD)/buflite_zc.h $(BUILD)/inclite_zc.h $(BUILD)/dclite_zc.h $(BUILD)/linedclite_zc.h $(BUILD)/grflite_zc.h $(BUILD)/movelite_zc.h $(BUILD)/checkedlite_zc.h $(BUILD)/cmplite_zc.h $(BUILD)/forinclite_zc.h $(BUILD)/microlite_zc.h $(BUILD)/movestacklite_zc.h $(BUILD)/endlite_zc.h $(BUILD)/drawitlite_zc.h $(BUILD)/latticelite_zc.h $(BUILD)/looplite_zc.h $(BUILD)/demolite_zc.h $(BUILD)/eventlite_zc.h $(BUILD)/playlite_zc.h $(BUILD)/rightlite_zc.h $(BUILD)/cursorlite_zc.h $(BUILD)/uplite_zc.h $(BUILD)/ticklite_zc.h $(BUILD)/framelite_zc.h $(BUILD)/plotdclite_zc.h $(BUILD)/movelite_zc.h $(BUILD)/checkedlite_zc.h $(BUILD)/cmplite_zc.h $(BUILD)/forinclite_zc.h $(BUILD)/microlite_zc.h $(BUILD)/movestacklite_zc.h $(BUILD)/endlite_zc.h $(BUILD)/drawitlite_zc.h $(BUILD)/latticelite_zc.h $(BUILD)/looplite_zc.h $(BUILD)/demolite_zc.h $(BUILD)/eventlite_zc.h $(BUILD)/playlite_zc.h $(BUILD)/inputlite_zc.h $(BUILD)/rightlite_zc.h $(BUILD)/cursorlite_zc.h $(BUILD)/uplite_zc.h $(BUILD)/ticklite_zc.h $(BUILD)/framelite_zc.h $(BUILD)/plotdclite_zc.h $(BUILD)/abortlite_zc.h $(BUILD)/aimmovelite_zc.h $(BUILD)/idlelite_zc.h $(BUILD)/layerlite_zc.h $(BUILD)/endslite_zc.h $(BUILD)/speedlite_zc.h $(BUILD)/midlite_zc.h $(BUILD)/livelite_zc.h $(BUILD)/accellite_zc.h $(BUILD)/restartlite_zc.h $(BUILD)/widthlite_zc.h $(BUILD)/bothcolorlite_zc.h $(BUILD)/menufulllite_zc.h $(BUILD)/menubiglite_zc.h $(BUILD)/trylite_zc.h $(BUILD)/stepcountlite_zc.h $(BUILD)/anglesfulllite_zc.h $(BUILD)/braceangleslite_zc.h $(BUILD)/bracepilite_zc.h $(BUILD)/setmenulite_zc.h $(BUILD)/nearlatticelite_zc.h $(BUILD)/f64iflite_zc.h $(BUILD)/wraplatticelite_zc.h $(BUILD)/menulooplite_zc.h $(BUILD)/idxalllite_zc.h $(BUILD)/disklat_zc.h $(BUILD)/stocklat_zc.h $(BUILD)/depthbuflite_zc.h $(BUILD)/depthrstlite_zc.h $(BUILD)/depthplotlite_zc.h $(BUILD)/depthlinelite_zc.h $(BUILD)/ramblk_zc.h $(BUILD)/namefile_zc.h $(BUILD)/dirlook_zc.h $(BUILD)/dirdel_zc.h $(BUILD)/fopen_zc.h $(BUILD)/fwrite_zc.h $(BUILD)/multiblk_zc.h $(BUILD)/redsea_zc.h $(BUILD)/rsroot_zc.h $(BUILD)/rsfile_zc.h $(BUILD)/rsalloc_zc.h $(BUILD)/rsfree_zc.h $(BUILD)/rsmulti_zc.h $(BUILD)/rscfile_zc.h $(BUILD)/rscwrite_zc.h $(BUILD)/rscseek_zc.h $(BUILD)/rsclib_zc.h $(BUILD)/rspersist_zc.h $(BUILD)/runzc_zc.h | $(BUILD)
@@ -442,7 +448,7 @@ $(KERNEL): $(KERNEL_OBJS) src/linker-kernel.ld
 	$(CLANG) $(CFLAGS_KERNEL) $(LDFLAGS_KERNEL) $(KERNEL_OBJS) -o $@
 
 # ---- Pi 4B diagnostic boot (distinct from QEMU virt) ----
-$(BUILD)/zealbooter-pi.o: src/zealbooter.c src/handoff.h src/elf64.h src/plat_pi4.h src/pi4_pcie_fdt.h src/pi4_dma.h src/mmio_map.h src/linker-booter.ld | $(BUILD)
+$(BUILD)/zealbooter-pi.o: src/zealbooter.c src/lz4_archive.h src/lz4_block.h src/handoff.h src/elf64.h src/plat_pi4.h src/pi4_pcie_fdt.h src/pi4_dma.h src/mmio_map.h src/linker-booter.ld | $(BUILD)
 	$(CLANG) $(CFLAGS) $(CFLAGS_PI) -c src/zealbooter.c -o $@
 
 $(BUILD)/kernel_stub-pi.o: src/kernel_stub.c src/zc/runtime.h Makefile src/handoff.h src/plat_pi4.h src/hc_ir.h src/hc_front.h src/a64_emit.h src/fb_font.h src/virtio_kbd.h src/virtio_tablet.h src/virtio_blk.h src/virtio_net.h src/virtio_snd.h src/usb_input.h src/usb_xhci.h src/usb_hid.h src/usb_platform.h src/zc_source_store.h src/zc_source_editor.h src/disk_layout.h src/mmio_map.h $(BUILD)/netofdots_zc.h $(BUILD)/lines_zc.h $(BUILD)/minigr_zc.h $(BUILD)/memsort_zc.h $(BUILD)/peekplot_zc.h $(BUILD)/offbmp_zc.h $(BUILD)/heapstr_zc.h $(BUILD)/catfmt_zc.h $(BUILD)/heapque_zc.h $(BUILD)/jobque_zc.h $(BUILD)/jobrun_zc.h $(BUILD)/taskspawn_zc.h $(BUILD)/popup_zc.h $(BUILD)/doclite_zc.h $(BUILD)/doclib_zc.h $(BUILD)/notes_zc.h $(BUILD)/globshare_zc.h $(BUILD)/life_zc.h $(BUILD)/cartlite_zc.h $(BUILD)/vec2lite_zc.h $(BUILD)/angleslite_zc.h $(BUILD)/coslite_zc.h $(BUILD)/sqrtlite_zc.h $(BUILD)/arglite_zc.h $(BUILD)/commalite_zc.h $(BUILD)/colorlite_zc.h $(BUILD)/plot3lite_zc.h $(BUILD)/tospilite_zc.h $(BUILD)/tosutf8lite_zc.h $(BUILD)/colorlite_zc.h $(BUILD)/turtlelite_zc.h $(BUILD)/filllite_zc.h $(BUILD)/initlite_zc.h $(BUILD)/deflite_zc.h $(BUILD)/printlite_zc.h $(BUILD)/msglite_zc.h $(BUILD)/menulite_zc.h $(BUILD)/findlite_zc.h $(BUILD)/fslite_zc.h $(BUILD)/setuplite_zc.h $(BUILD)/ttlite_zc.h $(BUILD)/buflite_zc.h $(BUILD)/inclite_zc.h $(BUILD)/dclite_zc.h $(BUILD)/linedclite_zc.h $(BUILD)/grflite_zc.h $(BUILD)/movelite_zc.h $(BUILD)/checkedlite_zc.h $(BUILD)/cmplite_zc.h $(BUILD)/forinclite_zc.h $(BUILD)/microlite_zc.h $(BUILD)/movestacklite_zc.h $(BUILD)/endlite_zc.h $(BUILD)/drawitlite_zc.h $(BUILD)/latticelite_zc.h $(BUILD)/looplite_zc.h $(BUILD)/demolite_zc.h $(BUILD)/eventlite_zc.h $(BUILD)/playlite_zc.h $(BUILD)/inputlite_zc.h $(BUILD)/rightlite_zc.h $(BUILD)/cursorlite_zc.h $(BUILD)/uplite_zc.h $(BUILD)/ticklite_zc.h $(BUILD)/framelite_zc.h $(BUILD)/plotdclite_zc.h $(BUILD)/abortlite_zc.h $(BUILD)/aimmovelite_zc.h $(BUILD)/idlelite_zc.h $(BUILD)/layerlite_zc.h $(BUILD)/endslite_zc.h $(BUILD)/speedlite_zc.h $(BUILD)/midlite_zc.h $(BUILD)/livelite_zc.h $(BUILD)/accellite_zc.h $(BUILD)/restartlite_zc.h $(BUILD)/widthlite_zc.h $(BUILD)/bothcolorlite_zc.h $(BUILD)/menufulllite_zc.h $(BUILD)/menubiglite_zc.h $(BUILD)/trylite_zc.h $(BUILD)/stepcountlite_zc.h $(BUILD)/anglesfulllite_zc.h $(BUILD)/braceangleslite_zc.h $(BUILD)/setmenulite_zc.h $(BUILD)/nearlatticelite_zc.h $(BUILD)/f64iflite_zc.h $(BUILD)/wraplatticelite_zc.h $(BUILD)/menulooplite_zc.h $(BUILD)/idxalllite_zc.h $(BUILD)/disklat_zc.h $(BUILD)/stocklat_zc.h $(BUILD)/depthbuflite_zc.h $(BUILD)/depthrstlite_zc.h $(BUILD)/depthplotlite_zc.h $(BUILD)/depthlinelite_zc.h $(BUILD)/ramblk_zc.h $(BUILD)/namefile_zc.h $(BUILD)/dirlook_zc.h $(BUILD)/dirdel_zc.h $(BUILD)/fopen_zc.h $(BUILD)/fwrite_zc.h $(BUILD)/multiblk_zc.h $(BUILD)/redsea_zc.h $(BUILD)/rsroot_zc.h $(BUILD)/rsfile_zc.h $(BUILD)/rsalloc_zc.h $(BUILD)/rsfree_zc.h $(BUILD)/rsmulti_zc.h $(BUILD)/rscfile_zc.h $(BUILD)/rscwrite_zc.h $(BUILD)/rscseek_zc.h $(BUILD)/rsclib_zc.h $(BUILD)/rspersist_zc.h $(BUILD)/runzc_zc.h | $(BUILD)
@@ -451,7 +457,7 @@ $(BUILD)/kernel_stub-pi.o: src/kernel_stub.c src/zc/runtime.h Makefile src/hando
 $(BUILD)/kernel_stub-pi.o: src/pi4_dma_probe.h src/pi4_xhci_probe.h src/pi4_xhci_dma_probe.h src/pi4_xhci_dma_alias.h
 
 $(BUILD)/kernel_stub.o $(BUILD)/kernel_stub-pi.o $(BUILD)/kernel_stub-pi-desktop.o: src/pi4_audio.h src/pi4_sdhci_core.h
-$(BUILD)/kernel_stub-pi-desktop.o: src/pi4_sdhci_card.h src/pi4_sdhci_probe.h
+$(BUILD)/kernel_stub-pi-desktop.o: src/pi4_sdhci_card.h src/pi4_sdhci_probe.h src/pi4_sd_install.h
 $(BUILD)/kernel_stub.o $(BUILD)/kernel_stub-pi.o $(BUILD)/kernel_stub-pi-desktop.o: src/block_device.h src/block_partition.h
 $(BUILD)/kernel_stub.o $(BUILD)/kernel_stub-pi.o $(BUILD)/kernel_stub-pi-desktop.o: src/block_range.h
 $(BUILD)/kernel_stub-pi-desktop.o: src/pi4_hdmi_audio.inc src/pi4_audio_policy.h
@@ -488,26 +494,45 @@ pi-image: pi-desktop-sd
 
 check-pi-desktop-image: pi-desktop-sd
 
+PI_USB_IMAGE ?= $(BUILD)/zealos-pi4b-usb.img
+.PHONY: pi-usb-image
+pi-usb-image: pi-desktop-sd
+	python3 scripts/build-pi-image.py --usb-installer --firmware-root "$(PI_FIRMWARE_ROOT)" --payload "$(BUILD)/pi-desktop-esp" --output "$(PI_USB_IMAGE)" --size-mib 513 --force
+
 # UEFI CD image (Limine-recommended aarch64 path)
-iso: esp $(BUILD)/sources.tar $(BUILD)/install.img esp/limine-iso.conf
-	rm -rf $(BUILD)/iso_root
-	mkdir -p $(BUILD)/iso_root/boot/limine $(BUILD)/iso_root/EFI/BOOT
-	cp -f $(BOOT) $(BUILD)/iso_root/boot/zealbooter.elf
-	cp -f $(KERNEL) $(BUILD)/iso_root/boot/kernel.elf
-	cp -f $(DEMO_BC) $(BUILD)/iso_root/boot/demo.hcbc
-	cp -f $(BUILD)/sources.tar $(BUILD)/iso_root/boot/
-	cp -f $(BUILD)/install.img $(BUILD)/iso_root/boot/install.img
-	cp -f esp/limine-iso.conf $(BUILD)/iso_root/boot/limine/limine.conf
-	cp -f $(LIMINE_BIN)/limine-uefi-cd.bin $(BUILD)/iso_root/boot/limine/
-	cp -f $(LIMINE_BIN)/BOOTAA64.EFI $(BUILD)/iso_root/EFI/BOOT/
+ISO_BOOT_ARGS ?=
+INSTALL_IMAGE ?= $(BUILD)/install.img
+ISO_ROOT = $(BUILD)/iso_root$(if $(ISO_BOOT_ARGS),-diagnostics)
+DIAGNOSTIC_ISO := $(BUILD)/zealos-aarch64-diagnostics.iso
+.PHONY: iso-diagnostics
+iso-diagnostics:
+	$(MAKE) iso ISO=$(DIAGNOSTIC_ISO) ISO_BOOT_ARGS=zeal.diagnostics=1 \
+		DISK_IMG=$(BUILD)/diagnostics-disk.img INSTALL_IMAGE=$(BUILD)/diagnostics-install.img
+
+$(BUILD)/upgrade-sources.lz4: $(BUILD)/sources.tar scripts/lz4-source-archive.py
+	python3 scripts/lz4-source-archive.py $(BUILD)/sources.tar $@
+
+iso: $(INSTALL_IMAGE) $(BUILD)/upgrade-sources.lz4 esp/limine-iso.conf
+	rm -rf $(ISO_ROOT)
+	mkdir -p $(ISO_ROOT)/boot/limine $(ISO_ROOT)/EFI/BOOT
+	cp -f $(BOOT) $(ISO_ROOT)/boot/zealbooter.elf
+	cp -f $(KERNEL) $(ISO_ROOT)/boot/kernel.elf
+	cp -f $(DEMO_BC) $(ISO_ROOT)/boot/demo.hcbc
+	cp -f $(BUILD)/sources.tar $(ISO_ROOT)/boot/
+	cp -f $(INSTALL_IMAGE) $(ISO_ROOT)/boot/install.img
+	cp -f $(BUILD)/upgrade-sources.lz4 $(ISO_ROOT)/boot/
+	cp -f esp/limine-iso.conf $(ISO_ROOT)/boot/limine/limine.conf
+	$(if $(ISO_BOOT_ARGS),printf "    cmdline: %s\n" "$(ISO_BOOT_ARGS)" >> $(ISO_ROOT)/boot/limine/limine.conf,)
+	cp -f $(LIMINE_BIN)/limine-uefi-cd.bin $(ISO_ROOT)/boot/limine/
+	cp -f $(LIMINE_BIN)/BOOTAA64.EFI $(ISO_ROOT)/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J \
 		-hfsplus -apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		$(BUILD)/iso_root -o $(ISO)
+		$(ISO_ROOT) -o $(ISO)
 	@echo "ISO: $(ISO)"
 
-$(BUILD)/install.img: esp scripts/build-install-image.py | $(BUILD)
+$(INSTALL_IMAGE): esp scripts/build-install-image.py | $(BUILD)
 	python3 scripts/build-install-image.py $(DISK_IMG) $@
 
 $(ESP_FAT): $(BOOT) $(KERNEL) $(DEMO_BC) $(BUILD)/sources.tar $(ESP_DIR)/limine.conf | $(BUILD)
@@ -698,12 +723,12 @@ check-usb-topology: check-usb-hid check-upstream esp
 	python3 scripts/check-compat.py --usb-input nec --usb-with-virtio --usb-hubs 2 --usb-hotplug --probe-gui-workflow
 	python3 scripts/check-compat.py --usb-input qemu --usb-hubs 5 --usb-hotplug
 
-check-serial: check-page-tables iso $(FW_VARS) $(RS_IMG)
+check-serial: check-page-tables iso-diagnostics $(FW_VARS) $(RS_IMG)
 	@rm -f $(BUILD)/check-serial.log
 	@( $(QEMU) $(QEMU_VIRT) \
 		$(QEMU_FW) \
 		$(QEMU_RS) \
-		-drive if=none,file=$(ISO),id=cd0,media=cdrom,readonly=on \
+		-drive if=none,file=$(DIAGNOSTIC_ISO),id=cd0,media=cdrom,readonly=on \
 		-device virtio-scsi-pci,id=scsi0 \
 		-device scsi-cd,drive=cd0,bootindex=0 \
 		-serial stdio -display none \
@@ -900,3 +925,30 @@ clean:
 	rm -rf $(BUILD)
 	rm -f $(ESP_DIR)/boot/zealbooter.elf $(ESP_DIR)/boot/kernel.elf \
 		$(ESP_DIR)/boot/hello.elf $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI
+
+# Shared installer geometry must rebuild every platform that includes it.
+$(BUILD)/kernel_stub.o $(BUILD)/kernel_stub-pi.o $(BUILD)/kernel_stub-pi-desktop.o: src/install_layout.h src/block_device.h src/block_partition.h src/upgrade_preflight.h src/upgrade_journal.h src/upgrade_commit.h src/efi_fat32.h src/efi_fat32_read.h src/efi_source_tar.h src/efi_boot_slots.h src/efi_upgrade_owner.h src/efi_slot_manifest.h src/efi_fat32_ownership.h src/efi_fat32_reclaim_plan.h src/efi_fat32_reclaim.h src/source_upgrade_scan.h src/source_upgrade_stage.h src/source_upgrade_pending.h src/lz4_archive.h src/lz4_block.h src/lz4_stream.h
+
+.PHONY: check-install-layout
+check-install-layout: | $(BUILD)
+	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -Wno-unused-function -fsanitize=address,undefined tests/install_layout_test.c -o $(BUILD)/install-layout-test
+	$(BUILD)/install-layout-test $(DISK_IMG)
+
+.PHONY: check-redsea-growth-transaction
+check-redsea-growth-transaction: | $(BUILD)
+	$(HOST_CC) -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -fsanitize=address,undefined tests/redsea_growth_transaction_test.c -o $(BUILD)/redsea-growth-transaction-test
+	$(BUILD)/redsea-growth-transaction-test
+	$(HOST_CC) -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -fsanitize=address,undefined tests/redsea_growth_shared_journal_test.c -o $(BUILD)/redsea-growth-shared-journal-test
+	$(BUILD)/redsea-growth-shared-journal-test
+
+.PHONY: check-redsea-growth-utm-admission
+check-redsea-growth-utm-admission: | $(BUILD)
+	$(HOST_CC) -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -fsanitize=address,undefined tests/redsea_growth_utm_coordination_test.c -o $(BUILD)/redsea-growth-utm-admission-test
+	$(BUILD)/redsea-growth-utm-admission-test $(BUILD)/utm-parity-goal/disk-final.img
+	$(BUILD)/redsea-growth-utm-admission-test $(BUILD)/utm-parity-goal/installed-final.img
+	$(BUILD)/redsea-growth-utm-admission-test $(BUILD)/utm-parity-goal/utm-repeat-before-third-upgrade.img
+
+.PHONY: check-redsea-growth-images
+check-redsea-growth-images: | $(BUILD)
+	$(HOST_CC) -std=c11 -O1 -Wall -Wextra -Werror -Wno-unused-function -fsanitize=address,undefined tests/redsea_growth_real_image_test.c -o $(BUILD)/redsea-growth-real-image-test
+	python3 scripts/check-redsea-growth-images.py $(BUILD)/utm-parity-goal/disk-final.img $(BUILD)/utm-parity-goal/utm-repeat-before-third-upgrade.img --binary $(BUILD)/redsea-growth-real-image-test

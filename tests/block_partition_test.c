@@ -145,6 +145,11 @@ int main(void) {
         data.sector_count != 8192)
         return fail("select the unique ZealOS GPT data partition");
 
+    mbr_entry(sector(&disk, 0), 1, 0x0c, 4096, 2048);
+    if (zeal_partition_scan(read_sector, &disk, disk.sectors, parts,
+                            ZEAL_PARTITION_MAX, &count) != ZEAL_PARTITION_UNSUPPORTED)
+        return fail("reject hybrid MBR boot entries over GPT data");
+    make_gpt(&disk);
     sector(&disk, 2)[128 + 32] ^= 1;
     if (zeal_partition_scan(read_sector, &disk, disk.sectors, parts,
                             ZEAL_PARTITION_MAX, &count) != ZEAL_PARTITION_INVALID)

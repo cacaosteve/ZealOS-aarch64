@@ -1,0 +1,211 @@
+{
+  "date": "2026-11-13",
+  "repository_commit": "54e17b0edcc71cc2a8f4aafac383bede8dd70b95",
+  "working_tree": "dirty; includes preserved user Pi work",
+  "result": "PASS",
+  "artifacts": [
+    {
+      "path": "build/zealos-aarch64-hello.iso",
+      "sha256": "d9ffff52cc3b120826374900e03b2187ae33d64d5d6de14a422cdd8e5eba8674"
+    },
+    {
+      "path": "build/disk.img",
+      "sha256": "7d930908057da07422eeca71f4b85a73a9dd0a3300cecf729800f92b69c496dd"
+    },
+    {
+      "path": "build/kernel.elf",
+      "sha256": "db5beadd509b0cc6cbce2755dbd87f2a686d4d5097ba75e59fac68bdba4345c8"
+    },
+    {
+      "path": "build/kernel-pi-desktop.elf",
+      "sha256": "f21942a17b09c729c69d2d05d6bc40a8f101d07451854dcf98267cc58ff4aa00"
+    }
+  ],
+  "runtime_profile": "Homebrew QEMU with HVF, virt/gic-v3, 1 GiB RAM, ramfb, PCI VirtIO disk and sound, NEC xHCI USB ISO and input; not a UTM.app GUI test",
+  "commands": [
+    "python3 scripts/check-iso-installer.py --usb-cd --target-mib 1024 --guided --editor --log-prefix installer-release2-1g",
+    "python3 scripts/check-iso-installer.py --usb-cd --target-mib 128 --log-prefix installer-release2-128",
+    "python3 scripts/check-iso-installer.py --usb-cd --existing-disk build/legacy-working-128-snapshot.img --existing-kernel build/kernel.elf --log-prefix installer-release2-legacy"
+  ],
+  "passed_supporting_evidence": [
+    {
+      "path": "build/installer-final-host-tests.log",
+      "sha256": "749195db8ed5446e81fd4380bafcaef60a2eb67169136d878d15f78c2ae36d3e"
+    },
+    {
+      "path": "build/installer-final-source-tests.log",
+      "sha256": "95836333ae08a6c0d6b4e03b89f96107f5b5894a8a59557aecf07c7a5c0196b7"
+    },
+    {
+      "path": "build/installer-readonly-guards-acceptance.log",
+      "sha256": "e5ae3a05158fdbcda851f6548db2a703b2af712c6d26ab95284b0d837e65a489"
+    },
+    {
+      "path": "build/installer-release-pi-build.log",
+      "sha256": "3d88e5e7dc23ba5b83c4789330601b8edb2531f75d391d62d8fddc20a1112b53"
+    },
+    {
+      "path": "build/legacy-verified-acceptance.log",
+      "sha256": "776e97e1c82473886587fce82e43ffc1040b3f351d1f21598b3f3ff6efd3b531"
+    }
+  ],
+  "limitations": [
+    "Only one attached PCI VirtIO installation target is supported; multiple targets are rejected.",
+    "Extra capacity is available to RedSea data; active source store remains 32 MiB with a separate 32 MiB compaction bank.",
+    "File provider maximum is 8 MiB per file.",
+    "Layout arithmetic tested through 5 TiB; runtime installation test is 1 GiB.",
+    "No physical Pi card or original UTM installation was modified; Pi desktop kernel compilation only in this change.",
+    "Runtime program checks are representative, not exhaustive coverage of the application collection."
+  ],
+  "pending": [],
+  "notes": [
+    "Previous release-1g run passed installation, disk-only desktop, app, audio and source cold persistence; editor cold-reopen input raced the asynchronous startup splash. The harness now observes splash arrival before typing.",
+    "After runtime completion, the harness gained an early fixture-collision guard; the tested fixture was independently confirmed not to contain Tests/InstallerPersist.ZC. No guest or image change followed the runtime runs."
+  ],
+  "fresh_1g": {
+    "result": "PASS",
+    "checks": [
+      "guided target selection, cancel without changes, explicit ERASE",
+      "full sector read-back, independent GPT CRC and capacity validation, preserved EFI and source seeds",
+      "disk-only desktop and StadiumGen output",
+      "real keyboard editor type/save/compile/run and cold-reboot reopen",
+      "captured nonzero VirtIO PCM",
+      "saved source returned 42 after cold reboot",
+      "1 MiB RedSea data file survived cold reboot, every byte compared"
+    ],
+    "evidence": [
+      {
+        "path": "build/installer-release2-1g-acceptance.log",
+        "sha256": "48eeba3aaa2a453183be1e1d3484399538401c7bd9ea6841e4bb14f35a78b846"
+      },
+      {
+        "path": "build/installer-release2-1g-audio.wav",
+        "sha256": "9cd70ebcb9905e2cd12b1e3b3e4b734dcc0ca8e60330d2dac52fb25ce3b134ff"
+      },
+      {
+        "path": "build/installer-release2-1g-confirm.png",
+        "sha256": "94ffa0e5e8309c8596090a6882d535e82cab1c8900ac9ff0a8316a7aff929e22"
+      },
+      {
+        "path": "build/installer-release2-1g-disk-boot.log",
+        "sha256": "b6c2915abf525c395b7439b62933b80dbdb69505d5984a5a30c24e70b44f4b2b"
+      },
+      {
+        "path": "build/installer-release2-1g-live.log",
+        "sha256": "3e0304b3a48f72be452c5f269b0b0e8d0c1639be177100ef14b1eeb39f62f000"
+      },
+      {
+        "path": "build/installer-release2-1g-reboot.log",
+        "sha256": "90289a2c88924d65236cd26fcb900118ee560906de63b6c13d372134064ed427"
+      },
+      {
+        "path": "build/installer-release2-1g-reopened-editor.png",
+        "sha256": "8ac6823895c032bfd95cd9364c11635c10ff75b5b2a4661fe22efd7e6bbe55f8"
+      },
+      {
+        "path": "build/installer-release2-1g-complete.png",
+        "sha256": "7bc821c3cbf639330e121bae8d996b5d29f9607c90d764036a9542104d92e7f7"
+      }
+    ]
+  },
+  "visual_review": [
+    "capacity and explicit ERASE confirmation readable",
+    "write and read-back progress and disk-only reboot instructions readable",
+    "cold-reopened EditorInstall.ZC visibly contains I64 EditorInstall(){return 42;}"
+  ],
+  "fresh_128m": {
+    "result": "PASS",
+    "checks": [
+      "installed disk is byte-identical to packaged template",
+      "disk-only desktop, StadiumGen and captured VirtIO PCM",
+      "saved source returns 42 after cold reboot"
+    ],
+    "evidence": [
+      {
+        "path": "build/installer-release2-128-acceptance.log",
+        "sha256": "745f499fe26ccef30b58d59b4eb5725996f181d205777aab15a7f02817810efb"
+      },
+      {
+        "path": "build/installer-release2-128-audio.wav",
+        "sha256": "7fd93fc261f3044f4a39e2b3033643d5c43bc9d80d378f4374958094ae9cc7cf"
+      },
+      {
+        "path": "build/installer-release2-128-disk-boot.log",
+        "sha256": "a9d7ba93621406a3346465c972cbe9284cf612eb11932183b7434ac99aa7b427"
+      },
+      {
+        "path": "build/installer-release2-128-live.log",
+        "sha256": "7aadd0e34accc79598b8d3e8b3fd1437c3b2597e4073156643b4b2dec4521c5e"
+      },
+      {
+        "path": "build/installer-release2-128-reboot.log",
+        "sha256": "2e38e701a941b6ba8e436aedff3216d04d9f6a71356a8d3b4cf018472bcf2543"
+      }
+    ]
+  },
+  "existing_128m_new_kernel": {
+    "result": "PASS",
+    "checks": [
+      "original snapshot copied; only disposable EFI kernel replaced and read back",
+      "all non-EFI bytes unchanged by kernel replacement",
+      "new kernel read-only VirtIO probe marker observed on both boots",
+      "desktop and captured VirtIO PCM",
+      "new Tests/InstallerPersist.ZC absent from initial fixture, saved and executed before and after cold reboot",
+      "all 889 pre-existing source records and payloads preserved byte-for-byte"
+    ],
+    "fixture": {
+      "path": "build/legacy-working-128-snapshot.img",
+      "sha256": "d01b4a93bd16af3760f0d1f9b35c24bb7b8f30c4b5aaa4acde552b515047677e"
+    },
+    "evidence": [
+      {
+        "path": "build/installer-release2-legacy-acceptance.log",
+        "sha256": "6820b579b565fb2e864809922a25ce666deb57a32a047d5d99820bcace4a2d98"
+      },
+      {
+        "path": "build/installer-release2-legacy-audio.wav",
+        "sha256": "35783ede76094c7f7f004d2a67c170e7488d0fe06f8268edbef101b0ccef4cb6"
+      },
+      {
+        "path": "build/installer-release2-legacy-disk-boot.log",
+        "sha256": "62e9b54d64d79aeb142cd7ffff3fc53ad858702ce8d322b1a4a9268bf08059da"
+      },
+      {
+        "path": "build/installer-release2-legacy-reboot.log",
+        "sha256": "7d1e6a27ac9c0e8ed0d1caea164004c9f5ad62072071dba2bb5892329b07925c"
+      }
+    ]
+  },
+  "test_harness": [
+    {
+      "path": "scripts/check-iso-installer.py",
+      "sha256": "9cdbb0a289190fcdf3ff02468ba3aac4080cd626c98f0ad761c7b3eb542e9367"
+    },
+    {
+      "path": "scripts/installer_input.py",
+      "sha256": "4f5d3b56de9dff820dcf381a3cdd88e0be7f5f84a60389089102a75e42a60344"
+    },
+    {
+      "path": "scripts/check-installer-guards.py",
+      "sha256": "fbd65a9390f57c79378587c94351d5970619ab3879ba25ad4e89a7428ff873ae"
+    },
+    {
+      "path": "tests/install_layout_test.c",
+      "sha256": "e00edfaa0462bf601a1b4b834fba6029db391a020b253e987079cc0f7e133fb2"
+    }
+  ],
+  "manual_utm_acceptance": {
+    "date": "2026-11-13",
+    "vm": "ZealOS AArch64 Guided Installer 1 GiB",
+    "platform": "Apple Silicon UTM",
+    "result": "PASS (user confirmed)",
+    "checks": [
+      "guided installation completed",
+      "ISO detached and configuration reloaded; disk unchanged by detachment",
+      "booted from installed 1 GiB VirtIO disk",
+      "saved file still present after restarting"
+    ],
+    "evidence": "User confirmation and Screenshot 2026-11-13 at 10.53.58 PM.png in conversation",
+    "scope": "Manual confirmation covers installed desktop and file persistence; app/audio coverage is from automated runs."
+  }
+}

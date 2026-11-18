@@ -13,6 +13,7 @@
 
 /* handoff.flags */
 #define ZEAL_FLAG_PLAT_PI4 (1u << 0) /* BCM2711 / Pi UEFI — not QEMU virt */
+#define ZEAL_FLAG_DIAGNOSTICS (1u << 1) /* Run boot regression and framebuffer tests. */
 
 #define ZEAL_MEM_USABLE   1
 #define ZEAL_MEM_RESERVED 2
@@ -92,7 +93,7 @@ struct zeal_handoff {
     uint64_t magic0;
     uint64_t magic1;
     uint32_t size; /* sizeof(struct zeal_handoff) */
-    uint32_t revision; /* 9; extensions are appended */
+    uint32_t revision; /* 11; extensions are appended */
     uint32_t bootloader_id; /* ZEAL_BL_* */
     uint32_t flags;
     uint64_t hhdm_offset;
@@ -129,4 +130,12 @@ struct zeal_handoff {
     uint64_t boot_counter;
     /* revision >= 9; onboard BCM2711 eMMC2 SD-card controller window. */
     struct zeal_pi4_sd pi4_sd;
+    /* revision >= 10; optional compressed source archive on installer ISO. */
+    uint64_t upgrade_sources_virt;
+    uint64_t upgrade_sources_size;
+    /* revision >= 11; installer copies of the bootloader and kernel ELF. */
+    uint64_t upgrade_kernel_virt;
+    uint64_t upgrade_kernel_size;
+    uint64_t upgrade_booter_virt;
+    uint64_t upgrade_booter_size;
 };

@@ -20,7 +20,7 @@ import tempfile
 
 SECTOR = 512
 ALIGN_SECTORS = 2048  # 1 MiB
-MBR_EFI_FAT32 = 0xEF
+MBR_EFI_FAT32 = 0x0C
 MBR_ZEAL_DATA = 0xDA
 REDSEA_SIGNATURE = 0x88
 REDSEA_DIR = 0x10
@@ -70,8 +70,9 @@ def make_mbr(total_sectors: int, boot_start: int, boot_count: int,
     table = 446
     sector[table:table + 16] = mbr_partition(0, MBR_EFI_FAT32,
                                              boot_start, boot_count)
-    sector[table + 16:table + 32] = mbr_partition(0, MBR_ZEAL_DATA,
-                                                  data_start, data_count)
+    if data_count:
+        sector[table + 16:table + 32] = mbr_partition(0, MBR_ZEAL_DATA,
+                                                      data_start, data_count)
     sector[510:512] = b"\x55\xaa"
     return bytes(sector)
 
@@ -339,10 +340,10 @@ def sha256(path: pathlib.Path) -> str:
 
 
 def verify_fat_payload(fat_image: pathlib.Path, tree: pathlib.Path,
-                       mcopy: str) -> None:
+                       mcopy: str, extra: tuple[str, ...] = ()) -> None:
     with tempfile.TemporaryDirectory(prefix="zealos-pi-fat-check-") as temp_name:
         temp = pathlib.Path(temp_name)
-        for index, rel in enumerate(REQUIRED_FIRMWARE + REQUIRED_PAYLOAD):
+        for index, rel in enumerate(REQUIRED_FIRMWARE + REQUIRED_PAYLOAD + extra):
             extracted = temp / f"readback-{index}"
             subprocess.run([mcopy, "-i", str(fat_image), "::/" + rel,
                             str(extracted)], check=True,
@@ -362,7 +363,8 @@ def verify_image_layout(image: pathlib.Path, total_sectors: int,
         second = struct.unpack_from("<B3sB3sII", mbr, 462)
         if first[2] != MBR_EFI_FAT32 or first[4:] != (boot_start, boot_count):
             raise ValueError("raw image FAT32 EFI partition entry mismatch")
-        if second[2] != MBR_ZEAL_DATA or second[4:] != (data_start, data_count):
+        expected = (MBR_ZEAL_DATA, data_start, data_count) if data_count else (0, 0, 0)
+        if (second[2], *second[4:]) != expected:
             raise ValueError("raw image ZealOS data partition entry mismatch")
         if boot_start + boot_count > data_start or data_start + data_count != total_sectors:
             raise ValueError("raw image partition ranges overlap or do not cover the image")
@@ -425,7 +427,9 @@ def build(args: argparse.Namespace) -> None:
         raise ValueError("image and boot sizes must be multiples of 512 bytes")
     if args.boot_mib < 512:
         raise ValueError("boot FAT32 partition must be at least 512 MiB")
-    if data_count < required_data:
+    if args.usb_installer and data_count != 0:
+        raise ValueError("USB installer size must equal boot size plus 1 MiB")
+    if not args.usb_installer and data_count < required_data:
         raise ValueError(f"data partition needs at least {required_data} sectors for current RedSea/source layout")
     if total_sectors > 0xFFFFFFFF:
         raise ValueError("requested image exceeds 2 TiB MBR limit")
@@ -439,13 +443,30 @@ def build(args: argparse.Namespace) -> None:
         require_files(merged, REQUIRED_FIRMWARE + REQUIRED_PAYLOAD,
                       "merged boot root")
 
+        extra = ()
+        if args.usb_installer:
+            archive_size = (merged / "boot/sources.tar").stat().st_size
+            if not 0 < archive_size <= 64 * 1024 * 1024:
+                raise ValueError("Pi USB installer source archive must fit the kernel's 64 MiB limit")
+            config = merged / "limine.conf"
+            text = config.read_text()
+            module = "    module_path: boot():/boot/sources.tar"
+            if text.count(module) != 1:
+                raise ValueError("staged desktop must have exactly one sources module")
+            config.write_text(text.replace(
+                module, module + "\n    module_path: boot():/boot/pi-install.bin"
+            ).replace("/ZealOS Pi 4B desktop - PI-DESKTOP-2",
+                      "/ZealOS Pi 4B live USB installer"))
+            (merged / "boot/pi-install.bin").write_bytes(b"ZPIINST1")
+            extra = ("boot/pi-install.bin",)
+
         boot_image = temp / "boot-fat32.img"
         with boot_image.open("wb") as image:
             image.truncate(boot_count * SECTOR)
         subprocess.run([mkfs, "-F", "32", "-S", str(SECTOR), "-n", "ZEALBOOT",
                         str(boot_image)], check=True)
         mtools_copy_tree(boot_image, merged, mmd, mcopy)
-        verify_fat_payload(boot_image, merged, mcopy)
+        verify_fat_payload(boot_image, merged, mcopy, extra)
 
         mbr = make_mbr(total_sectors, boot_start, boot_count,
                        data_start, data_count)
@@ -456,21 +477,26 @@ def build(args: argparse.Namespace) -> None:
             image.seek(0)
             image.write(mbr)
         copy_partition(output, boot_image, boot_start)
-        initialize_redsea(output, data_start, data_count, source_layout)
-        initialize_source_banks(output, data_start, data_count, source_layout)
+        if not args.usb_installer:
+            initialize_redsea(output, data_start, data_count, source_layout)
+            initialize_source_banks(output, data_start, data_count, source_layout)
         verify_image_layout(output, total_sectors, boot_start, boot_count,
                             data_start, data_count)
-        verify_redsea_image(output, data_start, data_count, source_layout)
-        verify_source_banks(output, data_start, data_count, source_layout)
+        if not args.usb_installer:
+            verify_redsea_image(output, data_start, data_count, source_layout)
+            verify_source_banks(output, data_start, data_count, source_layout)
         if output.stat().st_size != total_sectors * SECTOR:
             raise ValueError("raw image file size changed during assembly")
 
     print(f"Pi 4B image written: {output}")
     print(f"  size: {args.size_mib} MiB ({total_sectors} sectors)")
     print(f"  FAT32 boot: LBA {boot_start} + {boot_count} sectors")
+    if args.usb_installer:
+        print("  Pi live desktop installer: zinstall, then zinstall ERASE SD")
+        return
     print(f"  ZealOS data (MBR type 0xDA): LBA {data_start} + {data_count} sectors")
     print("  ZealOS data: full-size RedSea volume with /Home and /Tmp, plus both source banks")
-    print("  `psdopen` binds this partition at runtime; ordinary FileWrite targets RedSea")
+    print("  startup attempts to bind this partition; ordinary FileWrite targets RedSea")
     print("  no physical disk or microSD card was opened")
 
 
@@ -490,6 +516,8 @@ def main() -> None:
     parser.add_argument("--mkfs-fat", default="mkfs.fat")
     parser.add_argument("--mcopy", default="mcopy")
     parser.add_argument("--mmd", default="mmd")
+    parser.add_argument("--usb-installer", action="store_true",
+                        help="build a FAT-only live desktop that installs to a separate SD card")
     parser.add_argument("--force", action="store_true",
                         help="replace an existing output image file")
     args = parser.parse_args()

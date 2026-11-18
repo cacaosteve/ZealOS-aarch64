@@ -779,12 +779,7 @@ def inject_home_startup_tasks(gui_terminal: bytes, startup_tasks: bytes) -> byte
 
 
 def translate_home_once(source: bytes) -> bytes:
-    """Keep the live DVD session usable without offering the legacy installer.
-
-    Keep the pinned DVD branch's live-session behavior while exposing the
-    bounded ARM64 installer command to the user. Preserve the upstream
-    ``Once.ZC`` source everywhere else.
-    """
+    """Keep the original DVD prompt and route Yes to the ARM64 installer."""
     text = source.decode('utf-8')
     start = '\t\t\t"\\nIf you answer \'No\' you can play with\\n"\n'
     end = '\t\t\tif (FileFind("::/Misc/Tour"))\n'
@@ -796,9 +791,15 @@ def translate_home_once(source: bytes) -> bytes:
     if (dvd_prompt.count('Install onto hard drive') != 1 or
             dvd_prompt.count('RunFile("::/Misc/OSInstall",, TRUE);') != 1):
         raise ValueError('pinned Once DVD installer flow changed')
-    replacement = ('\t\t\t"\\nARM64 live session is ready.\\n"\n'
-                   '\t\t\t"Install to a 128 MiB UTM/QEMU VirtIO disk: zinstall, then zinstall ERASE.\\n";\n')
-    return (text[:first] + replacement + text[last:]).encode('utf-8')
+    replacement = dvd_prompt.replace(
+        'if (YorN)', 'if (BootstrapGuiTerminalInstallPrompt())', 1
+    ).replace('RunFile("::/Misc/OSInstall",, TRUE);',
+              'BootstrapGuiTerminalInstall();')
+    remainder = text[last:].replace(
+        'if (FileFind("::/Misc/Tour"))',
+        'if (FileFind("::/Misc/Tour", NULL, FUF_JUST_DIRS))', 1)
+    remainder = remainder.replace('InFile("Tour");', 'ExeFile2("Tour.IN");', 1)
+    return (text[:first] + replacement + remainder).encode('utf-8')
 
 
 def _extract_home_startup_parts(source: bytes) -> tuple[bytes, bytes]:
@@ -807,9 +808,8 @@ def _extract_home_startup_parts(source: bytes) -> tuple[bytes, bytes]:
     The ARM64 adapter reuses the first terminal it already brought up, then
     translates upstream-only output/tiling calls into terminal-scoped bridges.
     This keeps the startup sequence tied to the pinned HomeSys implementation.
-    The DVD path reaches the live graphical session; its generated
-    ``Home/Once.ZC`` points to the bounded UTM/QEMU ``zinstall`` command and
-    never invokes the legacy BIOS/AHCI installer.
+    The DVD startup file uses the original confirmation before handing off
+    to the ARM64 installer.
     """
     text = source.decode('utf-8')
     boundary = '\nU0 StartUpTasks()\n'
@@ -856,16 +856,13 @@ def _extract_home_startup_parts(source: bytes) -> tuple[bytes, bytes]:
          '\t}\n'),
         ('\tWinTileVert;\n',
          '\tBootstrapGuiTerminalTileHomeWindows(user, bootstrap_gui_terminal_home_second);\n'),
-        ('\t"Boot Time:%7.3fs\\n", tS;\n',
-         '\tXTalk(user, "\\"Boot Time:%%7.3fs\\n\\", tS;\\n");\n'),
-        ('\tSilent; //no output to screen\n'
-         '\tACInit("/*;!*/Bible.TXT;!*/Clementine.TXT;!*/PCIDevices.DD;!*/HTML/*;!*/ChangeLog.DD");\n'
-         '\tSilent(OFF); //no output to screen\n',
-         '\tXTalk(user, "Silent; Cd(\\"/\\"); ACInit(\\"/*;!*/Bible.TXT;!*/Clementine.TXT;!*/PCIDevices.DD;!*/HTML/*;!*/ChangeLog.DD\\"); Cd(\\"/Home\\"); Silent(OFF);\\n");\n'),
-        ('\tif (sys_boot_src.u16[0] != BOOT_SRC_RAM)\n'
-         '\t\tPopUp("ExeFile2(\\"::/System/ZSplash.ZC\\");");\n',
-         '\tif (sys_boot_src.u16[0] != BOOT_SRC_RAM)\n'
-         '\t\tXTalk(user, "PopUp(\\"BootstrapGuiTerminalExeDocFile(\\\\\\"::/System/ZSplash.ZC\\\\\\");\\");\\n");\n'),
+        (''.join(anchors[5:10]) + '\n' + anchors[10],
+         '\tTaskExe(user, NULL, "\\"Boot Time:%7.3fs\\n\\", tS;\\n"\n'
+         '\t    "Cd; #include \\"Once\\";\\n"\n'
+         '\t    "Silent; Cd(\\"/\\"); ACInit(\\"/*;!*/Bible.TXT;!*/Clementine.TXT;!*/PCIDevices.DD;!*/HTML/*;!*/ChangeLog.DD\\"); Cd(\\"/Home\\"); Silent(OFF);\\n"\n'
+         '\t    "if (sys_boot_src.u16[0] != BOOT_SRC_RAM && bootstrap_gui_install_stage <= 0) "\n'
+         '\t    "PopUp(\\"BootstrapGuiTerminalExeDocFile(\\\\\\"::/System/ZSplash.ZC\\\\\\");\\");\\n"\n'
+         '\t    "Fs->new_answer=FALSE; BootstrapGuiTerminalPrompt(FALSE);", 1 << JOBf_FREE_ON_COMPLETE);\n'),
         ('\n}', '\n\treturn 0x2a;\n}'),
     )
     for old, new in replacements:
@@ -959,19 +956,49 @@ def translate_zsplash(source: bytes) -> bytes:
                         'dc->r = old_r;\n\tdc->depth_buf = NULL;', 1)
     text = text.replace('no_warn dc, x, y;',
                         '// Native ARM64 cursor rendering stays enabled.', 1)
-    text = text.replace('AutoComplete(OFF);',
-                        '// Keep global autocomplete task state unchanged.', 1)
-    text = text.replace('AutoComplete(ON);',
-                        '// Keep global autocomplete task state unchanged.', 1)
+    text = text.replace('U0 ZSplash()\n',
+        'U0 ZSplashBackground(I64)\n'
+        '{\n'
+        '\twhile (TRUE)\n'
+        '\t\tSleep(1000);\n'
+        '}\n\n'
+        'U0 ZSplash()\n', 1)
     text = text.replace('CTask\t*bg_task = User;',
         'CTask *splash_task = Fs;\n'
         '\tCTask *old_focus = sys_focus_task;\n'
-        '\tU0 (*old_draw_it)(CTask *task, CDC *dc) = Fs->draw_it;', 1)
-    text = text.replace('WinToTop(bg_task);',
-                        'WinToTop(splash_task);\n\tsys_focus_task = splash_task;', 1)
-    text = text.replace('WinBorder(, bg_task);', 'WinBorder(, splash_task);', 1)
-    text = text.replace('WinMax(bg_task);', 'WinMax(splash_task);', 1)
-    text = text.replace('bg_task->', 'splash_task->')
+        '\tU0 (*old_draw_it)(CTask *task, CDC *dc) = Fs->draw_it;\n'
+        '\tCTask *ac_task = ac.task;\n'
+        '\tBool ac_on_top = FALSE;\n'
+        '\tBool children_not_on_top = Bts(&Fs->display_flags, DISPLAYf_CHILDREN_NOT_ON_TOP);\n'
+        '\tCTask *bg_task = Spawn(&ZSplashBackground, NULL, "Splash Background");', 1)
+    old_background = ('\tWinToTop(bg_task);\n'
+                      '\tWinBorder(, bg_task);\n'
+                      '\tWinMax(bg_task);\n'
+                      '\tDocClear(bg_task->put_doc);\n'
+                      '\tBts(&bg_task->put_doc->flags, DOCf_HIDE_CURSOR);\n'
+                      '\tAutoComplete(OFF);')
+    if text.count(old_background) != 1:
+        raise ValueError('pinned ZSplash background setup changed')
+    text = text.replace(old_background,
+        '\tif (TaskValidate(ac_task))\n'
+        '\t\tac_on_top = Btr(&ac_task->display_flags, DISPLAYf_WIN_ON_TOP);\n'
+        '\tif (TaskValidate(bg_task))\n'
+        '\t{\n'
+        '\t\tbg_task->win_inhibit = WIG_NO_FOCUS_TASK_DEFAULT | WIF_SELF_DOC;\n'
+        '\t\tbg_task->text_attr = (WHITE << 4) | BLUE;\n'
+        '\t\tbg_task->display_flags = 1 << DISPLAYf_NO_BORDER;\n'
+        '\t\tWinMax(bg_task);\n'
+        '\t\tWinVert(0, TEXT_ROWS - 1, bg_task);\n'
+        '\t\tBts(&bg_task->display_flags, DISPLAYf_SHOW);\n'
+        '\t}\n'
+        '\tWinToTop(splash_task);\n'
+        '\tsys_focus_task = splash_task;', 1)
+    text = text.replace('Fs->draw_it = &DrawIt;',
+        'Fs->border_src = BDS_CONST;\n'
+        '\tFs->border_attr = (WHITE << 4) | LTBLUE;\n'
+        '\tFs->text_attr = (WHITE << 4) | BLUE;\n'
+        '\tBtr(&Fs->display_flags, DISPLAYf_NO_BORDER);\n'
+        '\tFs->draw_it = &DrawIt;', 1)
     text = text.replace('gr.fp_draw_mouse = &DrawNoMouse;', '// Native USB pointer remains enabled.', 1)
     text = text.replace('MouseHardEnable(FALSE);', '', 1)
     text = text.replace('gr.fp_draw_mouse = &DrawStdMouse;', '', 1)
@@ -987,9 +1014,14 @@ def translate_zsplash(source: bytes) -> bytes:
         '\t\tFree(bootstrap_zsplash_depth_buf);\n'
         '\t\tbootstrap_zsplash_depth_buf = NULL;\n'
         '\t}\n'
-        '\tFs->draw_it = old_draw_it;\n', 1)
-    text = text.replace('Kill(bg_task);',
-                        'if (TaskValidate(old_focus))\n\t\tsys_focus_task = old_focus;', 1)
+        '\tFs->draw_it = old_draw_it;\n'
+        '\tbootstrap_mesh_overlay_clear = TRUE;\n', 1)
+    text = text.replace('Kill(bg_task);\n\tAutoComplete(ON);',
+        'if (TaskValidate(bg_task))\n\t\tKill(bg_task);\n'
+        '\tif (TaskValidate(old_focus))\n\t\tsys_focus_task = old_focus;\n'
+        '\tif (!children_not_on_top)\n\t\tBtr(&Fs->display_flags, DISPLAYf_CHILDREN_NOT_ON_TOP);\n'
+        '\tif (ac_on_top && TaskValidate(ac_task))\n'
+        '\t\tBts(&ac_task->display_flags, DISPLAYf_WIN_ON_TOP);', 1)
     result = ('// ARM64 restores the packed pinned sprite bytes and uses the native USB pointer.\n' + text).encode('utf-8') + b'\0' + payload
     if (b'$SP,"<1>",BI=1$' not in result or
             b'Sprite3(dc, 0, 0, 0, $IB,"<1>",BI=1$);' not in result or
@@ -998,7 +1030,7 @@ def translate_zsplash(source: bytes) -> bytes:
             b'Free(bootstrap_zsplash_depth_buf);' not in result or
             b'Fs->draw_it = old_draw_it;' not in result or
             b'MStrPrint("%s", "ZealOS ARM64");' not in result or
-            b'bg_task' in result):
+            b'Kill(bg_task);' not in result):
         raise ValueError('ARM64 ZSplash translation lost its embedded sprite tokens')
     return result
 
@@ -1836,6 +1868,13 @@ def translate_docterm(source: bytes) -> bytes:
 def translate_autocomplete_task(source: bytes) -> bytes:
     """Render AutoComplete suggestions into the popup's DolDoc document."""
     text = source.decode('utf-8')
+    old_attrs = ('\tFs->border_attr = LTGRAY << 4 + DriveTextAttrGet(\':\') & 15;\n'
+                 '\tFs->text_attr   = LTGRAY << 4 + BLUE;')
+    if text.count(old_attrs) != 1:
+        raise ValueError('pinned AutoComplete window attributes changed')
+    text = text.replace(old_attrs,
+        '\tFs->border_attr = (LTGRAY << 4) | (DriveTextAttrGet(\':\') & 15);\n'
+        '\tFs->text_attr = (LTGRAY << 4) | BLUE;', 1)
     old = '\tWinHorz(left, Fs->win_right);\n\tWinVert(top,  Fs->win_bottom);'
     new = ('\t// Spawned ARM64 tasks may not yet have TaskInit window bounds.\n'
            '\t// Keep the anchored completion popup large enough to render.\n'
@@ -1969,6 +2008,11 @@ def translate_winmgr(source: bytes) -> bytes:
     if "ZcTaskFrameRun" in text:
         raise ValueError("WinMgr.ZC already contains the frame-run hook")
     text = text.replace(call, "\t\tZcTaskFrameRun;", 1)
+    cursor_branch = "\t\telse if (set_cursor)\n\t\t{\n\t\t\tunlock = DocLock(res);"
+    if text.count(cursor_branch) != 1:
+        raise ValueError("expected exactly one WinCursorPosSet document lock")
+    text = text.replace(cursor_branch, cursor_branch.replace(
+        "if (set_cursor)", "if (res && set_cursor)"), 1)
     menu_press = "\t\t\t\t\tif (mouse.lb && !old_mouse.lb)\n"
     if text.count(menu_press) != 1:
         raise ValueError(
@@ -2112,6 +2156,15 @@ def translate_filemgr(source: bytes) -> bytes:
         raise ValueError("expected exactly one FMRebuildDoc definition")
     if "FMRebuildDocSourceVolume" in text:
         raise ValueError("FileMgr.ZC already contains the source-volume adapter")
+    # A chooser can be opened by a full-screen application. The ARM64
+    # cooperative popup bridge assigns focus before FileMgr builds its window,
+    # so update its z-order after the document has been installed.
+    open_tree = '\tFMRebuildDoc(&doc, &head, mode);\n\tif (tmpde1 = Cd2DirEntry(head, old_cur_dir))'
+    if text.count(open_tree) != 1:
+        raise ValueError('expected exactly one FileMgr initial document setup')
+    text = text.replace(open_tree,
+                        '\tFMRebuildDoc(&doc, &head, mode);\n\tWinToTop(Fs);\n'
+                        '\tif (tmpde1 = Cd2DirEntry(head, old_cur_dir))', 1)
     for old, new in (
         ('tmpde->user_data = DocPrint(doc, "$$TR,\\\"%s\\\",U=0x%X$$", tmpde->name, tmpde);',
          'tmpde->user_data = DocPrint(doc, "$$TR,\\\"%s\\\"$$", tmpde->name);\n'

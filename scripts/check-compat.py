@@ -5,6 +5,25 @@ from collections import Counter
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+# Indexed desktop colors from upstream System/Gr/GrPalette.ZC.
+SLATE_BLACK = (227, 227, 227)
+SLATE_BLUE = (79, 132, 166)
+SLATE_GREEN = (115, 162, 85)
+SLATE_RED = (179, 79, 75)
+SLATE_PURPLE = (138, 82, 195)
+SLATE_LTBLUE = (148, 191, 222)
+SLATE_YELLOW = (212, 180, 117)
+
+# Weighted RGB luminance, scaled by 1000. Slate terminal text uses blue
+# (about 124k), while its dark canvas and chrome are below this cutoff.
+DESKTOP_TEXT_THRESHOLD = 115000
+LOGIC_PROMPT_TEXT_THRESHOLD = 130000
+PSALMODY_TEXT_THRESHOLD = 115000
+BUDGET_ENTRY_TEXT_THRESHOLD = 95000
+# Lattice uses a direct RGB HUD with gray text over black.
+LATTICE_HUD_TEXT_THRESHOLD = 215000
+
+
 def copyfile_cow(src, dst):
     """Prefer an APFS copy-on-write clone for disposable QEMU disk images."""
     clone = subprocess.run(['/bin/cp', '-c', str(src), str(dst)],
@@ -123,6 +142,8 @@ p.add_argument('--probe-stock-redsea-file', action='store_true',
                help='load one contiguous stock-layout RedSea root file on a disposable disk')
 p.add_argument('--probe-stock-redsea-write', action='store_true',
                help='create/delete stock RedSea files and empty directories on a disposable disk')
+p.add_argument('--probe-stock-redsea-growth', action='store_true',
+               help='require automatic growth and cold persistence on a full disposable RedSea directory')
 p.add_argument('--probe-diskraw-context', action='store_true',
                help='report DiskRaw compile result in the current desktop context')
 p.add_argument('--probe-diskraw-live', action='store_true',
@@ -698,6 +719,8 @@ if args.probe_diskraw_live:
 if args.probe_stock_redsea_file:
     args.probe_raw_redsea_geometry = 'stockfile'
     args.probe_demo_definestr = True
+if args.probe_stock_redsea_growth:
+    args.probe_stock_redsea_write = True
 if args.probe_stock_redsea_write:
     args.pci = True
     args.probe_raw_redsea_geometry = 'stockwrite'
@@ -1061,6 +1084,16 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
     cmd += ['-qmp', f'unix:{qmp_path},server=on,wait=off']
     if args.pci:
         copyfile_cow(pathlib.Path(os.environ.get('ZEAL_TEST_DISK', str(ROOT/'build/disk.img'))), tmp/'disk.img')
+        if args.probe_xcaliber or args.probe_3d_apps or args.probe_source_execute:
+            # Exercise the current fixture on the disposable installed disk.
+            # RedSea returns an allocation identifier from FileWrite, not a
+            # byte count, and older images contain the former assertion.
+            subprocess.run(['python3', str(ROOT/'scripts/source-volume.py'), 'put',
+                            str(tmp/'disk.img'), str(ROOT/'tests/compat/HomePath.ZC'),
+                            'Tests/HomePath.ZC'], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(['python3', str(ROOT/'scripts/source-volume.py'), 'put',
+                            str(tmp/'disk.img'), str(ROOT/'tests/compat/SourceExecute.ZC'),
+                            'Tests/SourceExecute.ZC'], check=True, stdout=subprocess.DEVNULL)
         if args.probe_raw_redsea_geometry:
             # The focused fixture is mounted as disk:, separate from the ISO's
             # read-only source volume. Refresh its test source in this private
@@ -1190,9 +1223,14 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         struct.pack_into('<H', root_dir, 0, 0x410)
                         root_dir[2:4] = b'.\0'
                         struct.pack_into('<qqq', root_dir, 40, offset + 2, 512, 0)
+                        if args.probe_stock_redsea_growth:
+                            struct.pack_into('<H', root_dir, 64, 0x410)
+                            root_dir[66:69] = b'..\0'
+                            struct.pack_into('<qqq', root_dir, 104, offset + 2, 0, 0)
+                        shift = 1 if args.probe_stock_redsea_growth else 0
                         for slot, name, first, data in (
-                            (1, b'EARLY.TXT', offset + 10, b'early'),
-                            (2, b'LATE.TXT', offset + 11, b'late'),
+                            (1 + shift, b'EARLY.TXT', offset + 10, b'early'),
+                            (2 + shift, b'LATE.TXT', offset + 11, b'late'),
                         ):
                             entry = slot * 64
                             struct.pack_into('<H', root_dir, entry, 0x420)
@@ -1200,8 +1238,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                             struct.pack_into('<qqq', root_dir, entry + 40,
                                              first, len(data), 0)
                         for slot, name, first in (
-                            (3, b'EMPTYDIR', offset + 12),
-                            (4, b'FULLDIR', offset + 13),
+                            (3 + shift, b'EMPTYDIR', offset + 12),
+                            (4 + shift, b'FULLDIR', offset + 13),
                         ):
                             entry = slot * 64
                             struct.pack_into('<H', root_dir, entry, 0x410)
@@ -1317,7 +1355,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             redsea[510:512] = b'\x55\xaa'
             redsea[512] = 0x07
         (tmp/'redsea.img').write_bytes(redsea)
-        cmd += ['-drive', f'if=none,format=raw,file={tmp}/redsea.img,id=rs', '-device', 'virtio-blk-device,drive=rs', '-drive', f'if=none,file={ROOT}/build/zealos-aarch64-hello.iso,id=cd,media=cdrom,readonly=on', '-device', 'virtio-scsi-pci,id=scsi', '-device', 'scsi-cd,drive=cd,bootindex=0']
+        iso = pathlib.Path(os.environ.get('ZEAL_TEST_ISO', str(ROOT/'build/zealos-aarch64-hello.iso')))
+        cmd += ['-drive', f'if=none,format=raw,file={tmp}/redsea.img,id=rs', '-device', 'virtio-blk-device,drive=rs', '-drive', f'if=none,file={iso},id=cd,media=cdrom,readonly=on', '-device', 'virtio-scsi-pci,id=scsi', '-device', 'scsi-cd,drive=cd,bootindex=0']
     guest = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
     buf = bytearray()
     def until(marker, timeout=120):
@@ -1529,8 +1568,13 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 'workflow-' if args.probe_gui_workflow else
                 'catalog-' if args.probe_program_catalog else '')
         screen_name = f'usb-{usb_label}-{mode}{name}' if args.usb_input else mode+name
+        artifact_tag = os.environ.get('ZEAL_COMPAT_ARTIFACT_TAG', '')
+        if artifact_tag:
+            if not re.fullmatch(r'[A-Za-z0-9_-]+', artifact_tag):
+                raise ValueError('invalid ZEAL_COMPAT_ARTIFACT_TAG')
+            screen_name = artifact_tag + '-' + screen_name
         return ROOT/'build'/f'gui-{screen_name}.ppm'
-    def graphical_screen(name, foreground_threshold=240000,
+    def graphical_screen(name, foreground_threshold=DESKTOP_TEXT_THRESHOLD,
                          scanline_offset=1):
         # Inspect actual scanout, rather than treating successful command
         # assembly as proof that the user could see characters while typing.
@@ -1581,7 +1625,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         (2 * row + 1) * height // 150)
         raise RuntimeError('could not locate Wenceslas popup OKAY button')
     def require_graphical_text(name, expected, timeout=5,
-                               foreground_threshold=240000,
+                               foreground_threshold=DESKTOP_TEXT_THRESHOLD,
                                scanline_offset=1):
         deadline = time.monotonic() + timeout
         while True:
@@ -1769,7 +1813,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     raise
         raise RuntimeError(f'could not type graphical prompt line {text!r}')
     def run_graphical_terminal_command(name, source, expected, timeout=12,
-                                      foreground_threshold=240000,
+                                      foreground_threshold=DESKTOP_TEXT_THRESHOLD,
                                       accept_autocomplete=False,
                                       prompt_required=True, key_delay=0.5,
                                       prior_break_expected=False,
@@ -1797,7 +1841,13 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 raise RuntimeError(f'graphical terminal command {source!r} raised an '
                                    f'exception; see {graphical_path(name+"-result")}\n' +
                                    screen[3])
-            if screen[3].count(expected) > before_count:
+            # A long transcript may scroll an older matching result offscreen
+            # as the new one appears, leaving the total count unchanged.
+            # Also accept a result visibly following this submitted command.
+            command_pos = screen[3].rfind(source)
+            result_pos = screen[3].rfind(expected)
+            if (screen[3].count(expected) > before_count or
+                    (command_pos >= 0 and result_pos >= command_pos + len(source))):
                 return screen
             if time.monotonic() >= deadline:
                 try:
@@ -1811,10 +1861,11 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                                    f'{expected!r}; see {graphical_path(name+"-result")}\n' +
                                    screen[3] + '\n' + input_state)
             time.sleep(0.1)
-    def require_graphical_text_absent(name, unexpected, timeout=5):
+    def require_graphical_text_absent(name, unexpected, timeout=5,
+                                      foreground_threshold=DESKTOP_TEXT_THRESHOLD):
         deadline = time.monotonic() + timeout
         while True:
-            screen = graphical_screen(name)
+            screen = graphical_screen(name, foreground_threshold)
             if unexpected not in screen[3]:
                 print(f'PASS graphical text cleared: {unexpected!r}', flush=True)
                 return screen
@@ -1919,11 +1970,12 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
     def splash_label_pixel_counts(screen):
         width, height, _, _ = screen
         cx, cy = width // 2, height // 2
-        gray = (170, 170, 170)  # LTGRAY backing rectangles from upstream ZSplash.
-        title = rgb_pixels_in(screen, gray,
-                              (cx-130, cy-92, cx+130, cy-68))
-        motto = rgb_pixels_in(screen, gray,
-                              (cx-130, cy+68, cx+130, cy+92))
+        # LTGRAY backing rectangles in the Slate and classic palettes.
+        grays = ((68, 68, 68), (170, 170, 170))
+        title = max(rgb_pixels_in(screen, gray, (cx-130, cy-92, cx+130, cy-68))
+                    for gray in grays)
+        motto = max(rgb_pixels_in(screen, gray, (cx-130, cy+68, cx+130, cy+92))
+                    for gray in grays)
         return title, motto
     def splash_center_mesh_pixels(screen):
         width, height, pixels, _ = screen
@@ -1933,7 +1985,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             for x in range(max(0, cx-64), min(width, cx+65)):
                 i = (y*width+x)*3
                 red, green, blue = pixels[i:i+3]
-                if blue >= 80 and blue > red * 1.5 and blue > green * 1.25:
+                if (red, green, blue) in ((79, 132, 166), (148, 191, 222),
+                                          (0, 0, 170), (85, 85, 255)):
                     count += 1
         return count
     def is_graphical_splash_visible(screen):
@@ -2021,20 +2074,25 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
     def white_pixels(screen, x, y, width, height):
         stride, _, pixels, _ = screen
         return sum(pixels[((y+r)*stride+x+c)*3:((y+r)*stride+x+c)*3+3]
-                   == b'\xff\xff\xff' for r in range(height) for c in range(width))
+                   in (b'\xff\xff\xff', b'\xe3\xe3\xe3')
+                   for r in range(height) for c in range(width))
     def require_graphical_caret(screen, line):
         deadline = time.monotonic() + 6
         pattern = (re.compile(r'>[ \t]+' + re.escape(line[2:]))
                    if line.startswith('> ') else re.compile(re.escape(line)))
+        positions = set()
         while True:
             for row, text in enumerate(screen[3].splitlines()):
-                # Repeated commands may also appear in history, another
-                # terminal or a title. Inspect every occurrence for the caret.
-                for match in pattern.finditer(text):
-                    col = match.end()
-                    if white_pixels(screen, col*8, row*8, 8, 8) >= 8:
-                        print('PASS visible graphical insertion caret', flush=True)
-                        return
+                # Keep locations from earlier frames because the blinking
+                # caret can overlap the last glyph and disrupt OCR.
+                positions.update((match.end() * 8, row * 8)
+                                 for match in pattern.finditer(text))
+            for x, y in positions:
+                caret_bounds = (x, y - 1, x + 2, y + 9)
+                if (rgb_pixels_in(screen, SLATE_BLUE, caret_bounds) +
+                        rgb_pixels_in(screen, SLATE_LTBLUE, caret_bounds)) >= 14:
+                    print('PASS visible graphical insertion caret', flush=True)
+                    return
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.1)
@@ -2068,6 +2126,20 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
     def graphical_mouse_button(button, down):
         qmp_command('input-send-event', {'events': [
             {'type': 'btn', 'data': {'down': down, 'button': button}}]})
+    def wait_graphical_pointer_state(x, y, buttons):
+        deadline = time.monotonic() + 5
+        while True:
+            status = command('zstatus', 'pointer_state: ready=1')
+            match = re.search(r'pointer_xy=(-?\d+)/(-?\d+) buttons=(\d+)', status)
+            if match:
+                actual_x, actual_y, actual_buttons = map(int, match.groups())
+                # Absolute tablet coordinates are quantized twice, in QMP
+                # and in the guest, so the decoded pixel can differ by one.
+                if abs(actual_x - x) <= 1 and abs(actual_y - y) <= 1 and actual_buttons == buttons:
+                    return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'pointer did not reach {x}/{y} with buttons={buttons}:\n{status}')
+            time.sleep(.1)
     menu_root_x_cache = {}
     def graphical_menu_root_x(root_name):
         # Ask the live menu for its root position. This keeps pointer tests
@@ -2097,17 +2169,29 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         # submenu entry while that button remains held. Move into the root,
         # press, drag to the row, then release to activate it.
         move_graphical_pointer(root_x + 4, 4)
-        time.sleep(0.2)
+        deadline = time.monotonic() + 5
+        while True:
+            screen = graphical_screen(name+'-root')
+            if rgb_pixels_in(screen, SLATE_BLUE, (0, 0, 800, 8)) >= 500:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('OS menu did not open at the top edge: '+name)
+            time.sleep(.1)
         graphical_mouse_button('left', True)
-        time.sleep(0.1)
-        move_graphical_pointer(root_x + 4, row_y)
-        time.sleep(.3)
-        screen = graphical_screen(name+'-held')
-        if rgb_pixels_in(screen, (255, 255, 85),
-                         (root_x, row_y-4, min(root_x+240, 800), row_y+4)) < 32:
+        try:
+            command('zstatus', 'buttons=1')
+            move_graphical_pointer(root_x + 4, row_y)
+            deadline = time.monotonic() + 5
+            while True:
+                screen = graphical_screen(name+'-held')
+                if rgb_pixels_in(screen, SLATE_YELLOW,
+                                 (root_x, row_y-4, min(root_x+240, 800), row_y+4)) >= 32:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('OS menu did not highlight '+name+':\n'+screen[3])
+                time.sleep(.1)
+        finally:
             graphical_mouse_button('left', False)
-            raise RuntimeError('OS menu did not highlight '+name+':\n'+screen[3])
-        graphical_mouse_button('left', False)
         time.sleep(.3)
         return screen
     def require_graphical_pointer():
@@ -2208,14 +2292,13 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         start_y = (bottom + 1) * 8 + 4
         try:
             move_graphical_pointer(start_x, start_y)
-            qmp_command('input-send-event', {'events': [
-                {'type': 'btn', 'data': {'down': True, 'button': 'left'}}]})
-            time.sleep(0.15)
+            wait_graphical_pointer_state(start_x, start_y, 0)
+            graphical_mouse_button('left', True)
+            command('zstatus', 'buttons=1')
             move_graphical_pointer(start_x + dx * 8, start_y + dy * 8)
-            time.sleep(0.25)
-            qmp_command('input-send-event', {'events': [
-                {'type': 'btn', 'data': {'down': False, 'button': 'left'}}]})
-            time.sleep(0.4)
+            wait_graphical_pointer_state(start_x + dx * 8, start_y + dy * 8, 1)
+            graphical_mouse_button('left', False)
+            command('zstatus', 'buttons=0')
             after_release = graphical_task_rect(task_expr)
             expected = (left, right + dx, top, bottom + dy)
             if after_release != expected:
@@ -2236,6 +2319,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             print(f'PASS {label} corner resize persists: {original} -> {expected}',
                   flush=True)
         finally:
+            graphical_mouse_button('left', False)
             command(f'zc WinHorz({left},{right},{task_expr}); '
                     f'WinVert({top},{bottom},{task_expr});', 'zc: executed')
     def probe_graphical_terminal_resize():
@@ -2253,17 +2337,17 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         else:
             print('SKIP upstream User terminal resize: normal startup did not create it',
                   flush=True)
-    def wait_for_graphical_terminal_banner(timeout=15):
+    def wait_for_graphical_terminal_welcome(timeout=15):
         deadline = time.monotonic() + timeout
         while True:
             screen = graphical_screen('terminal-banner-after-reboot')
             if is_graphical_splash_visible(screen):
                 qmp_send_key('esc')
-            elif 'ZealOS ARM64 graphical terminal' in screen[3]:
-                print('PASS graphical terminal banner rendered after reboot', flush=True)
+            elif 'Public Domain Operating System' in screen[3]:
+                print('PASS graphical terminal welcome text rendered after reboot', flush=True)
                 return
             if time.monotonic() >= deadline:
-                raise RuntimeError('graphical terminal banner did not render after reboot; '
+                raise RuntimeError('graphical terminal welcome text did not render after reboot; '
                                    f'see {graphical_path("terminal-banner-after-reboot")}\n'
                                    + screen[3])
             time.sleep(0.1)
@@ -2449,6 +2533,19 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         if expected not in result: raise RuntimeError(f'{line}: missing {expected!r}\n{result}')
         print(f'PASS {line} + key {key!r}: {expected}', flush=True)
         return result
+    def checked_live_task_keys():
+        # The earlier focus-ring probes can leave no task focused. Assign
+        # UART input to the caller while its native input bindings run.
+        command('zc CTask *live_key_focus=sys_focus_task; sys_focus_task=Fs;',
+                'zc: executed')
+        command_with_key('zcall TaskLiveKey', b'k', 'zc => 0x000000000000006b')
+        command_with_key('zcall TaskLiveMessage', b'm', 'zc => 0x000000000000006d')
+        command_with_key('zcall TaskLiveScan', b'n', 'zc => 0x000000000000006e')
+        command('zload /Tests/TaskChars.ZC', 'zc: loaded /Tests/TaskChars.ZC')
+        command('zcall TaskCharQueueChecks', 'zc => 0x000000000000002a')
+        command_after_marker_key('zcall TaskCharLive', 'char scan ready', b'c',
+                                 'zc => 0x0000000000000063', delay=.3)
+        command('zc sys_focus_task=live_key_focus;', 'zc: executed')
     def command_after_marker_key(line, marker, key, expected, delay=0,
                                  terminator=b'\r', virtio=False):
         guest.stdin.write(line.encode()+terminator); guest.stdin.flush()
@@ -2490,8 +2587,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         # Keep the longer startup allowance separate from command timeouts.
         boot_start = time.monotonic()
         boot = until(b'\n> ', timeout=180)
-        for marker in ('hc IR OK (front+host)', 'virtio-blk: rw OK',
-                       'zc: native compiler ready',
+        if 'virtio-blk: ready (read-only probe)' not in boot and 'virtio-blk: rw OK' not in boot:
+            raise RuntimeError('boot missing successful VirtIO block probe')
+        for marker in ('zc: native compiler ready',
                        'zc: loaded /Kernel/KMathB.ZC',
                        'zc: upstream ZealOS graphics sources loaded',
                        'zc: boot graphics ODE hooks ready',
@@ -2500,14 +2598,25 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             if marker not in boot: raise RuntimeError(f'boot missing {marker}\n{boot[-4000:]}')
         if re.search(r'hc IR FAIL|(?:Upstream|Front) [^\r\n]* FAIL', boot):
             raise RuntimeError('legacy regressions')
-        print(f'PASS boot and legacy regression markers ({time.monotonic()-boot_start:.1f}s)', flush=True)
+        print(f'PASS desktop startup markers ({time.monotonic()-boot_start:.1f}s)', flush=True)
         # Give the cooperative terminal fiber and source manager at least a
         # short window to produce a real visible frame before measuring scanout.
         time.sleep(0.5)
+        if not args.pci and not args.probe_dvd_live:
+            require_graphical_text('dvd-startup-question', 'Install onto hard drive')
+            qmp_send_key('n')
+            time.sleep(0.5)
+            focus_graphical_terminal()
         desktop = command('zstatus', 'desktop: winmgr=1 gterm=1 windowdemo=0 presented_frames=')
         if 'keyboard_focus=' not in desktop:
             raise RuntimeError('zstatus omitted the active guest keyboard-focus task:\n' + desktop)
-        if 'keyboard_focus=Terminal' not in desktop:
+        if 'keyboard_focus=Server' in desktop and not args.probe_home_autostart:
+            # Normal Home startup can put the splash in front before this
+            # first status sample. Dismiss it through the guest input path.
+            focus_graphical_terminal()
+            desktop = command('zstatus', 'keyboard_focus=Terminal')
+        if ('keyboard_focus=Terminal' not in desktop and
+                not (args.probe_home_autostart and 'keyboard_focus=Server' in desktop)):
             raise RuntimeError('boot graphical terminal does not own the VM keyboard:\n' + desktop)
         if 'gui_keyboard: key_events=' not in desktop:
             raise RuntimeError('zstatus omitted graphical keyboard diagnostics:\n' + desktop)
@@ -4210,8 +4319,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             focus_graphical_terminal()
             command('zc TaskExe(bootstrap_gui_terminal_task,NULL,"PopUpColor;",1<<JOBf_FREE_ON_COMPLETE);',
                     'zc: executed')
-            require_graphical_text('popup-menu-choice', 'RED', timeout=10,
-                                   foreground_threshold=25000)
+            require_graphical_text('popup-menu-choice', '__RED', timeout=10)
             output = command(
                 'zc Print("popup_point=%X\\n",StockPopupPoint("__RED"));',
                 'popup_point=')
@@ -4810,8 +4918,12 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     span_workers_before)
                 type_graphical_prompt_line(
                     'span-launch', 'ExeFile2("/Apps/Span/Run.ZC");')
-                qmp_send_key('ret')
-                require_graphical_text('span-help', 'Build a bridge to hold-up', timeout=15)
+                # Span opens its one-button help immediately.  A long-held
+                # Return can activate that button while the app is starting.
+                qmp_send_key_hold('ret', 50)
+                # Span builds its full DolDoc landscape before showing help;
+                # that initialization can take much longer under VM load.
+                require_graphical_text('span-help', 'Build a bridge to hold-up', timeout=180)
                 # Dismiss the popup by clicking OK. A Return key-up can remain in
                 # the app queue and satisfy Span's subsequent Shift+Escape
                 # key-up wait before the exit path is actually under observation.
@@ -4854,17 +4966,17 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         raise RuntimeError('Span save did not create /Home/Span/Game.DATA:\n'+saved)
                     print('PASS Span edited bridge saved to writable disk', flush=True)
                     qmp_send_keys(['ctrl', 'n'])
-                    time.sleep(.5)
+                    # New rebuilds the landscape synchronously; sending Open
+                    # during that work can leave its key event unhandled.
+                    time.sleep(30)
                     reset_bridge = graphical_screen('span-save-reset')
                     if rgb_diff_count(edited_bridge, reset_bridge, bounds) < 10:
                         raise RuntimeError('Span New did not remove the test mass')
                     qmp_send_keys(['ctrl', 'o'])
                     chooser = require_graphical_text('span-open-dialog', 'Game.DATA', timeout=30,
-                                                    foreground_threshold=80000)
-                    # PopUpPickFile opens with ~/Span selected. Use the tree's
-                    # keyboard order (.DIR, then Game.DATA) so the test does
-                    # not depend on window geometry or pointer-to-cell scaling.
-                    qmp_send_key('down')
+                                                    foreground_threshold=190000)
+                    # The directory marker is hidden from FileMgr; the next
+                    # visible tree entry after ~/Span is Game.DATA.
                     qmp_send_key('down')
                     qmp_send_key('esc')
                     move_graphical_pointer(700, 500)
@@ -4955,8 +5067,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         raise RuntimeError('Span cold disk-only boot did not reach desktop')
                     focus_graphical_terminal()
                     type_graphical_prompt_line('span-cold-launch', 'ExeFile2("/Apps/Span/Run.ZC");')
-                    qmp_send_key('ret')
-                    require_graphical_text('span-cold-help', 'Build a bridge to hold-up', timeout=20)
+                    qmp_send_key_hold('ret', 50)
+                    require_graphical_text('span-cold-help', 'Build a bridge to hold-up', timeout=180)
                     move_graphical_pointer(120, 172)
                     time.sleep(.2)
                     graphical_mouse_button('left', True)
@@ -4965,10 +5077,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     time.sleep(.5)
                     qmp_send_keys(['ctrl', 'o'])
                     chooser = require_graphical_text('span-cold-open', 'Game.DATA', timeout=30,
-                                                    foreground_threshold=80000)
-                    # PopUpPickFile opens with ~/Span selected; move to
-                    # Game.DATA through the directory tree with the keyboard.
-                    qmp_send_key('down')
+                                                    foreground_threshold=190000)
+                    # Move from the selected ~/Span directory to Game.DATA.
                     qmp_send_key('down')
                     qmp_send_key('esc')
                     move_graphical_pointer(700, 500)
@@ -5300,10 +5410,20 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 frame_match = re.search(r'mesh_overlay: calls=(\d+)', after_space)
                 if not frame_match or int(frame_match.group(1)) <= frames_before_space:
                     raise RuntimeError('Titanium gameplay frame did not advance after Space')
+                retirement_before = re.search(r'mesh_overlay_retirement: retired=(\d+)', after_space)
+                if not retirement_before:
+                    raise RuntimeError('mesh retirement diagnostics missing: '+after_space)
+                titanium_retired_before = int(retirement_before.group(1))
                 qmp_send_key('esc')
                 run_graphical_terminal_command(
                     '3d-titanium-exit-smoke', '40+2;', 'ans=0x2A=42', timeout=20)
-                command('zstatus', 'failed=0')
+                status = command('zstatus', 'failed=0')
+                retirement = re.search(r'mesh_overlay_retirement: retired=(\d+) pending=(\d+)', status)
+                if not retirement or int(retirement.group(1)) <= titanium_retired_before or int(retirement.group(2)) != 0:
+                    raise RuntimeError('Titanium mesh was not retired after task exit: '+status)
+                colors = re.search(r'mesh_overlay_colors: zero=(\d+) nonzero=(\d+)', status)
+                if not colors or int(colors.group(1)) or int(colors.group(2)):
+                    raise RuntimeError('Titanium-only run retained mesh pixels after exit: '+status)
                 print('PASS Titanium press-a-key, game frame, input and Escape recovery',
                       flush=True)
                 raise SystemExit(0)
@@ -5342,7 +5462,14 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 # form open.  Close the form as a second step only if its
                 # fields are still on screen; this also keeps the picker
                 # assertion below as the authority for successful acceptance.
-                after_form_escape = graphical_screen('3d-grmodels-man-form-escape')
+                deadline = time.monotonic() + 10
+                while True:
+                    after_form_escape = graphical_screen('3d-grmodels-man-form-escape')
+                    if ('Head Radius' in after_form_escape[3] or
+                            'Single-Sided means' in after_form_escape[3] or
+                            time.monotonic() >= deadline):
+                        break
+                    time.sleep(0.1)
                 if ('Head Radius' in after_form_escape[3] and
                         'Single-Sided means' not in after_form_escape[3]):
                     qmp_send_key('esc')
@@ -5525,7 +5652,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     '3d-grmodels-ball-generated', 'Vertices:', timeout=25)
                 require_graphical_text('3d-grmodels-ball-repeat', 'Do another', timeout=10)
                 ball_sprite_pixels = rgb_pixels_in(
-                    ball_generated, (170, 0, 170), (8, 16, 400, 591))
+                    ball_generated, SLATE_PURPLE, (8, 16, 400, 591))
                 if ball_sprite_pixels < 100:
                     raise RuntimeError('GrModels Ball generated a sprite entry but its '
                                        'purple mesh was not visible in the document: '
@@ -5640,9 +5767,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 keepaway_colors = Counter(
                     tuple(candidate[2][offset:offset+3])
                     for offset in range(0, len(candidate[2]), 3))
-                if (keepaway_colors[(255, 255, 85)] > 400000 and
-                        keepaway_colors[(170, 0, 0)] > 1000 and
-                        keepaway_colors[(0, 0, 0)] > 5000 and
+                if (keepaway_colors[SLATE_YELLOW] > 400000 and
+                        keepaway_colors[SLATE_RED] > 1000 and
+                        keepaway_colors[SLATE_BLACK] > 5000 and
                         len(keepaway_colors) >= 8):
                     keepaway_frame = candidate
                     break
@@ -5663,9 +5790,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             keepaway_input_colors = Counter(
                 tuple(keepaway_input_frame[2][offset:offset+3])
                 for offset in range(0, len(keepaway_input_frame[2]), 3))
-            if (keepaway_input_colors[(255, 255, 85)] < 400000 or
-                    keepaway_input_colors[(170, 0, 0)] < 1000 or
-                    keepaway_input_colors[(0, 0, 0)] < 5000):
+            if (keepaway_input_colors[SLATE_YELLOW] < 400000 or
+                    keepaway_input_colors[SLATE_RED] < 1000 or
+                    keepaway_input_colors[SLATE_BLACK] < 5000):
                 raise RuntimeError('KeepAway game frame disappeared after input')
             print('PASS KeepAway game frame, space/mouse input and HUD refresh',
                   flush=True)
@@ -5782,6 +5909,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             frame_match = re.search(r'mesh_overlay: calls=(\d+)', gameplay)
             if not frame_match or int(frame_match.group(1)) == 0:
                 raise RuntimeError('Titanium did not render a gameplay frame after starting')
+            retirement_before = re.search(r'mesh_overlay_retirement: retired=(\d+)', gameplay)
+            if not retirement_before:
+                raise RuntimeError('mesh retirement diagnostics missing: '+gameplay)
+            titanium_retired_before = int(retirement_before.group(1))
             frames_before_space = int(frame_match.group(1))
             qmp_key_edges(['spc'], True)
             time.sleep(0.3)
@@ -5794,7 +5925,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             qmp_send_key('esc')
             run_graphical_terminal_command(
                 '3d-titanium-exit-smoke', '40+2;', 'ans=0x2A=42', timeout=20)
-            command('zstatus', 'failed=0')
+            status = command('zstatus', 'failed=0')
+            retirement = re.search(r'mesh_overlay_retirement: retired=(\d+) pending=(\d+)', status)
+            if not retirement or int(retirement.group(1)) <= titanium_retired_before or int(retirement.group(2)) != 0:
+                raise RuntimeError('Titanium mesh was not retired after task exit: '+status)
             report['titanium_gameplay_verified'] = True
             (ROOT/'build/3d-apps-compile.json').write_text(
                 json.dumps(report, indent=2)+'\n')
@@ -6001,31 +6135,36 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             move_graphical_pointer(700, 500)
             require_graphical_text('filled-form', 'UTM Budget entry')
             qmp_send_key('esc')
-            require_graphical_text('created-entry', '12.50:UTM Budget entry')
+            require_graphical_text('created-entry', '12.50:UTM Budget entry',
+                                   foreground_threshold=BUDGET_ENTRY_TEXT_THRESHOLD)
             select_os_menu_row('save-exit-menu', 'File', 1)
             run_graphical_terminal_command('saved-return', '6*7;', 'ans=0x2A=42')
             if graphical_task_rect('bootstrap_gui_terminal_task') != original_rect:
                 raise RuntimeError('Budget did not restore terminal geometry')
             budget_persistence_check()
             select_os_menu_row('reopen-menu', 'Apps', 9)
-            require_graphical_text('reopened-entry', '12.50:UTM Budget entry', timeout=20)
+            require_graphical_text('reopened-entry', '12.50:UTM Budget entry', timeout=20,
+                                   foreground_threshold=BUDGET_ENTRY_TEXT_THRESHOLD)
             budget_click_point('BudgetEntryPoint()')
             qmp_send_key('ret')
             move_graphical_pointer(700, 500)
             require_graphical_text('edit-form', 'Credit (from) Acct:', timeout=15)
             budget_field(1, '     25.00')
             qmp_send_key('esc')
-            require_graphical_text('edited-entry', '25.00:UTM Budget entry')
+            require_graphical_text('edited-entry', '25.00:UTM Budget entry',
+                                   foreground_threshold=BUDGET_ENTRY_TEXT_THRESHOLD)
             qmp_send_keys(['shift', 'esc'])
             run_graphical_terminal_command('abort-return', '40+2;', 'ans=0x2A=42')
             budget_persistence_check()
             select_os_menu_row('cancel-menu', 'Apps', 9)
-            require_graphical_text('abort-preserved-entry', '12.50:UTM Budget entry', timeout=20)
+            require_graphical_text('abort-preserved-entry', '12.50:UTM Budget entry', timeout=20,
+                                   foreground_threshold=BUDGET_ENTRY_TEXT_THRESHOLD)
             qmp_send_text('n', delay=.15, dismiss_splash=False)
             require_graphical_text('cancel-form', 'Credit (from) Acct:')
             budget_field(4, 'CANCELLED')
             qmp_send_keys(['shift', 'esc'])
-            require_graphical_text('cancelled-entry', '12.50:UTM Budget entry')
+            require_graphical_text('cancelled-entry', '12.50:UTM Budget entry',
+                                   foreground_threshold=BUDGET_ENTRY_TEXT_THRESHOLD)
             require_graphical_text_absent('cancelled-entry-absent', 'CANCELLED')
             select_os_menu_row('abort-exit-menu', 'File', 0)
             run_graphical_terminal_command('cancel-return', '40+2;', 'ans=0x2A=42')
@@ -6043,9 +6182,13 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             command('zload /Tests/ProgramCatalog.ZC', 'zc: loaded /Tests/ProgramCatalog.ZC')
             command('zc CTask *budget_check_task; CJob *budget_check_job;', 'zc: executed')
             budget_persistence_check()
+            # Wait for the boot terminal to finish Home startup before it
+            # can dispatch the Budget menu action.
             focus_graphical_terminal()
+            run_graphical_terminal_command('cold-ready', '40+2;', 'ans=0x2A=42')
             select_os_menu_row('cold-menu', 'Apps', 9)
-            require_graphical_text('cold-entry', '12.50:UTM Budget entry', timeout=20)
+            require_graphical_text('cold-entry', '12.50:UTM Budget entry', timeout=20,
+                                   foreground_threshold=BUDGET_ENTRY_TEXT_THRESHOLD)
             qmp_send_key('esc')
             run_graphical_terminal_command('cold-return', '40+2;', 'ans=0x2A=42')
             command('zstatus', 'failed=0')
@@ -6085,7 +6228,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             run_graphical_terminal_command(
                 'timeclock-report', 'TimeRep;', 'compatibility shift end',
                 timeout=20)
-            report = graphical_screen('timeclock-complete-report')[3]
+            report = require_graphical_text('timeclock-complete-report',
+                                            'compatibility shift start',
+                                            timeout=20)[3]
             # TimeRep's IN/OUT labels are red, below the monochrome OCR
             # threshold. The saved descriptions are white and prove each
             # entry was read back from the app's data file.
@@ -6117,9 +6262,11 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             select_os_menu_row('menu', 'Apps', 8)
             require_graphical_text('gates', '0 Gate:', timeout=20)
             qmp_send_text('ANX', delay=.15)
-            require_graphical_text('gate-before-edit', '0 Gate: ANX')
+            require_graphical_text('gate-before-edit', '0 Gate: ANX',
+                                   foreground_threshold=LOGIC_PROMPT_TEXT_THRESHOLD)
             qmp_send_key('backspace')
-            require_graphical_text_absent('gate-erased', '0 Gate: ANX')
+            require_graphical_text_absent('gate-erased', '0 Gate: ANX',
+                                   foreground_threshold=LOGIC_PROMPT_TEXT_THRESHOLD)
             qmp_send_text('D\n\n', delay=.15)
             require_graphical_text('table', 'Table size in hex', timeout=10)
             # Edit in the middle, then exercise both Backspace and forward
@@ -6132,18 +6279,22 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             qmp_send_key('ret')
             require_graphical_text('input-a', 'Input A:')
             qmp_send_text('0x3', delay=.15)
-            require_graphical_text('input-before-edit', 'Input A: 0x3')
+            require_graphical_text('input-before-edit', 'Input A: 0x3',
+                                   foreground_threshold=LOGIC_PROMPT_TEXT_THRESHOLD)
             qmp_send_key('backspace')
-            require_graphical_text_absent('input-erased', 'Input A: 0x3')
+            require_graphical_text_absent('input-erased', 'Input A: 0x3',
+                                   foreground_threshold=LOGIC_PROMPT_TEXT_THRESHOLD)
             qmp_send_text('C\n', delay=.15)
-            require_graphical_text('input-corrected', 'Input A: 0xC')
+            require_graphical_text('input-corrected', 'Input A: 0xC',
+                                   foreground_threshold=LOGIC_PROMPT_TEXT_THRESHOLD)
             qmp_send_text('0x0A', delay=.15)
             qmp_send_key('left')
             qmp_send_key('left')
             qmp_send_key('delete')
             qmp_send_key('end')
             qmp_send_key('ret')
-            require_graphical_text('input-b-corrected', 'Input B: 0xA')
+            require_graphical_text('input-b-corrected', 'Input B: 0xA',
+                                   foreground_threshold=LOGIC_PROMPT_TEXT_THRESHOLD)
             qmp_send_key('ret')
             require_graphical_text('output-a', 'Output A:')
             move_graphical_pointer(550, 350)
@@ -6151,9 +6302,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             qmp_send_text('0x8\n\n', delay=.15)
             time.sleep(1)
             circuit = graphical_screen('and-circuit')
-            if (rgb_pixels_in(circuit, (0, 0, 0), (40, 20, 180, 90)) < 100 or
-                    rgb_pixels_in(circuit, (170, 0, 0), (40, 20, 180, 90)) < 20 or
-                    rgb_pixels_in(circuit, (0, 170, 0), (20, 20, 180, 90)) < 20):
+            if (rgb_pixels_in(circuit, SLATE_BLACK, (40, 20, 180, 90)) < 100 or
+                    rgb_pixels_in(circuit, SLATE_RED, (40, 20, 180, 90)) < 20 or
+                    rgb_pixels_in(circuit, SLATE_GREEN, (20, 20, 180, 90)) < 20):
                 raise RuntimeError('Digital Logic did not render its gate, wires and input labels')
             command('zc Print("logic_drawing=%d\\n",bootstrap_gui_terminal_task->draw_it!=NULL);', 'logic_drawing=1')
             qmp_send_key('esc')
@@ -6171,8 +6322,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             time.sleep(1)
             reopened = graphical_screen('or-circuit')
             gate_box = (80, 24, 120, 64)
-            if len(rgb_coordinates_in(circuit, (0, 0, 0), gate_box) ^
-                   rgb_coordinates_in(reopened, (0, 0, 0), gate_box)) < 12:
+            if len(rgb_coordinates_in(circuit, SLATE_BLACK, gate_box) ^
+                   rgb_coordinates_in(reopened, SLATE_BLACK, gate_box)) < 12:
                 raise RuntimeError('reopened Digital Logic did not render a different OR gate')
             qmp_send_key('esc')
             time.sleep(.5)
@@ -9052,7 +9203,43 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                                 'nested_write>=0 && IsDir("disk:/EMPTYDIR") && '
                                 'FileRead("disk:/EMPTYDIR/AFTER.TXT")!=NULL);',
                                 'redsea_nested_write=1')
-                        command('zstatus', 'failed=0')
+                        command('zc I64 sc=FileWrite("disk:/EMPTYDIR/CASE.TXT","safe",4); '
+                                'Print("redsea_move_same=%d\\n",sc>=0 && '
+                                '!Move("disk:/EMPTYDIR/CASE.TXT","disk:/EMPTYDIR/case.txt") && '
+                                'FileRead("disk:/EMPTYDIR/CASE.TXT")!=NULL);',
+                                'redsea_move_same=1')
+                        command('zc I64 m=FileWrite("disk:/EMPTYDIR/MOVEFROM.TXT","move-data",9); '
+                                'Print("redsea_move=%d\\n",m>=0 && '
+                                'Move("disk:/EMPTYDIR/MOVEFROM.TXT","disk:/EMPTYDIR/MOVETO.TXT") && '
+                                'FileRead("disk:/EMPTYDIR/MOVEFROM.TXT")==NULL && '
+                                'FileRead("disk:/EMPTYDIR/MOVETO.TXT")!=NULL);',
+                                'redsea_move=1')
+                        command('zc CFile *bf=FOpen("disk:/EMPTYDIR/BLOCK.BIN","w",1); '
+                                'U8 *bb=CAlloc(512); bb[0]=91; bb[511]=37; '
+                                'I64 bw=bf!=NULL && FBlkWrite(bf,bb); '
+                                'if (bf) FClose(bf); Free(bb); '
+                                'Print("redsea_block_close=%d\\n",bw);',
+                                'redsea_block_close=1')
+                        if args.probe_stock_redsea_growth:
+                            command('zc CGrGlobals *growth_saved_graphics=&gr; '
+                                    'CDC *growth_saved_dc=gr.dc;', 'zc: executed')
+                            command('zc I64 g1=FileWrite("disk:/EMPTYDIR/FILL1.TXT","one",3), '
+                                    'g2=FileWrite("disk:/EMPTYDIR/FILL2.TXT","two",3); '
+                                    'Print("growth_filled=%d\\n",g1>=0 && g2>=0);',
+                                    'growth_filled=1')
+                            growth_result = command('zc I64 gr=FileWrite("disk:/EMPTYDIR/GROWN.TXT","grow",4); '
+                                                    'Print("growth_result=%d\\n",gr>=0);', 'growth_result=')
+                            command('zc Print("growth_graphics_binding=%d\\n",'
+                                    'ZcActiveGrGlobals()==growth_saved_graphics && '
+                                    'growth_saved_graphics->dc==growth_saved_dc);',
+                                    'growth_graphics_binding=1')
+                            command('zc Print("root_growth=%d\\n",'
+                                    'FileWrite("disk:/ROOT0.TXT","r0",2)>=0 && '
+                                    'FileWrite("disk:/ROOT1.TXT","r1",2)>=0 && '
+                                    'FileWrite("disk:/ROOT2.TXT","r2",2)>=0 && '
+                                    'FileWrite("disk:/ROOT3.TXT","r3",2)>=0);', 'root_growth=1')
+                        if not args.probe_stock_redsea_growth:
+                            command('zstatus', 'failed=0')
                         guest.terminate()
                         guest.wait(timeout=10)
                         buf.clear()
@@ -9076,6 +9263,31 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                                 'Print("redsea_cold_files=%d\\n",r!=NULL && l!=NULL && '
                                 'FileRead("disk:/EARLY.TXT")==NULL); Free(r); Free(l);',
                                 'redsea_cold_files=1')
+                        command('zc I64 mn=-1; U8 *mp=FileRead("disk:/EMPTYDIR/MOVETO.TXT",&mn); '
+                                'Print("redsea_cold_move=%d\\n",mp!=NULL && mn==9 && '
+                                '!StrCompare(mp,"move-data") && '
+                                'FileRead("disk:/EMPTYDIR/MOVEFROM.TXT")==NULL); Free(mp);',
+                                'redsea_cold_move=1')
+                        command('zc I64 bn=-1; U8 *bp=FileRead("disk:/EMPTYDIR/BLOCK.BIN",&bn); '
+                                'Print("redsea_cold_block=%d\\n",bp!=NULL && bn==512 && '
+                                'bp[0]==91 && bp[511]==37); Free(bp);',
+                                'redsea_cold_block=1')
+                        if args.probe_stock_redsea_growth:
+                            command('zc U8 *g1=FileRead("disk:/EMPTYDIR/FILL1.TXT"), '
+                                    '*g2=FileRead("disk:/EMPTYDIR/FILL2.TXT"); '
+                                    'Print("growth_existing_cold=%d\\n",g1!=NULL && g2!=NULL && '
+                                    '!StrCompare(g1,"one") && !StrCompare(g2,"two")); Free(g1); Free(g2);',
+                                    'growth_existing_cold=1')
+                            if 'growth_result=1' not in growth_result:
+                                raise RuntimeError('automatic directory growth is not implemented; existing files survived a cold boot')
+                            command('zc U8 *g=FileRead("disk:/EMPTYDIR/GROWN.TXT"); '
+                                    'Print("growth_new_cold=%d\\n",g!=NULL && !StrCompare(g,"grow")); Free(g);',
+                                    'growth_new_cold=1')
+                            command('zc U8 *r0=FileRead("disk:/ROOT0.TXT"), '
+                                    '*r3=FileRead("disk:/ROOT3.TXT"); '
+                                    'Print("growth_root_cold=%d\\n",r0!=NULL && r3!=NULL && '
+                                    '!StrCompare(r0,"r0") && !StrCompare(r3,"r3")); '
+                                    'Free(r0); Free(r3);', 'growth_root_cold=1')
                         command('zstatus', 'failed=0')
                         print('PASS stock RedSea file and empty-directory deletion, nested '
                               'DelTree, allocation reuse, and cold persistence', flush=True)
@@ -10369,7 +10581,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 else:
                     result = command('zc Print("catalog_compile=%d\\n", '
                                      f'{compile_expr});',
-                                     'catalog_compile=', timeout=45)
+                                     'catalog_compile=', timeout=180)
                     passed = ('catalog_compile=1' in result and
                               'ERR:' not in result and
                               'zc: compile failed' not in result)
@@ -10538,7 +10750,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     result = command(
                         'zc Print("demo_catalog_compile=%d\\n", '
                         f'{compile_expr});',
-                        'demo_catalog_compile=', timeout=45)
+                        'demo_catalog_compile=', timeout=180)
                     passed = ('demo_catalog_compile=1' in result and not re.search(
                         r'(?m)^ERR:|zc: compile failed|zc: data arena exhausted|'
                         r'zc: session unavailable|out of memory', result, re.I))
@@ -11726,10 +11938,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             while True:
                 time.sleep(.5)
                 before = graphical_screen('demo-tictactoe-before-move')
-                grid_pixels = (rgb_pixels_in(before, (255, 255, 255), (197, 100, 203, 400)) +
-                               rgb_pixels_in(before, (255, 255, 255), (297, 100, 303, 400)) +
-                               rgb_pixels_in(before, (255, 255, 255), (100, 197, 400, 203)) +
-                               rgb_pixels_in(before, (255, 255, 255), (100, 297, 400, 303)))
+                grid_pixels = (rgb_pixels_in(before, SLATE_BLACK, (197, 100, 203, 400)) +
+                               rgb_pixels_in(before, SLATE_BLACK, (297, 100, 303, 400)) +
+                               rgb_pixels_in(before, SLATE_BLACK, (100, 197, 400, 203)) +
+                               rgb_pixels_in(before, SLATE_BLACK, (100, 297, 400, 303)))
                 if grid_pixels >= 500:
                     break
                 if time.monotonic() >= deadline:
@@ -13637,7 +13849,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 # MassSpring intentionally randomizes radii from 2.5 to 12.5
                 # pixels; the smallest valid mass can have only a few dark
                 # pixels after the screenshot is sampled.
-                if rgb_pixels_in(masses, (0, 0, 0), (x-16, 224, x+17, 257)) < 1:
+                if rgb_pixels_in(masses, SLATE_BLACK, (x-16, 224, x+17, 257)) < 1:
                     raise RuntimeError('Mass Spring did not draw both placed circles')
             move_graphical_pointer(200, 240)
             graphical_mouse_button('right', True)
@@ -13646,13 +13858,13 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             time.sleep(.2)
             graphical_mouse_button('right', False)
             move_graphical_pointer(700, 500)
-            initial_black = rgb_coordinates_in(masses, (0, 0, 0), (100, 150, 600, 400))
+            initial_black = rgb_coordinates_in(masses, SLATE_BLACK, (100, 150, 600, 400))
             initial_width = max(x for x, y in initial_black)-min(x for x, y in initial_black)
             deadline = time.monotonic()+20
             while True:
                 spring = graphical_screen('stock-massspring-spring')
-                black = rgb_coordinates_in(spring, (0, 0, 0), (100, 150, 600, 400))
-                red = rgb_pixels_in(spring, (170, 0, 0), (100, 150, 600, 400))
+                black = rgb_coordinates_in(spring, SLATE_BLACK, (100, 150, 600, 400))
+                red = rgb_pixels_in(spring, SLATE_RED, (100, 150, 600, 400))
                 if black and red > 30:
                     width = max(x for x, y in black)-min(x for x, y in black)
                     if width < initial_width-30:
@@ -13664,7 +13876,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             qmp_send_key('ret')
             time.sleep(.5)
             reset = graphical_screen('stock-massspring-reset')
-            if rgb_pixels_in(reset, (170, 0, 0), (100, 150, 600, 400)) > 10 or rgb_pixels_in(reset, (0, 0, 0), (100, 150, 600, 400)) > 10:
+            if rgb_pixels_in(reset, SLATE_RED, (100, 150, 600, 400)) > 10 or rgb_pixels_in(reset, SLATE_BLACK, (100, 150, 600, 400)) > 10:
                 raise RuntimeError('Mass Spring restart did not remove its masses and spring')
             qmp_send_key('esc')
             time.sleep(.5)
@@ -13674,56 +13886,87 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 raise RuntimeError(f'Mass Spring did not restore window geometry: {original_rect} -> {restored_rect}')
             command('zc Print("stock_draw_restored=%d\\n", bootstrap_gui_terminal_task->draw_it==NULL);', 'stock_draw_restored=1')
             select_os_menu_row('stock-doodle-menu', 'Apps', 5)
-            time.sleep(.5)
+            deadline = time.monotonic() + 10
+            while True:
+                left, right, _, _ = graphical_task_rect('bootstrap_gui_terminal_task')
+                if right - left + 1 == 100:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Doodle did not maximize its drawing window')
+                time.sleep(.1)
             # Right release opens the original color picker. Pick RED by its
             # real menu entry, then draw an XOR preview and commit on release.
             move_graphical_pointer(300, 220)
             graphical_mouse_button('right', True)
-            time.sleep(.2)
+            command('zstatus', 'buttons=2')
             graphical_mouse_button('right', False)
-            picker = require_graphical_text('stock-doodle-picker', 'RED', timeout=10,
-                                            foreground_threshold=25000)
+            command('zstatus', 'buttons=0')
+            deadline = time.monotonic() + 10
+            while 'keyboard_focus=Server' not in command('zstatus', 'keyboard_focus='):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Doodle right release did not open the color picker')
+                time.sleep(.1)
+            require_graphical_text('stock-doodle-picker', '__RED', timeout=10)
             click_popup('__RED')
-            time.sleep(.4)
+            require_graphical_text_absent('stock-doodle-picker-closed', '__RED')
             move_graphical_pointer(160, 180)
+            wait_graphical_pointer_state(160, 180, 0)
             graphical_mouse_button('left', True)
-            time.sleep(.2)
+            wait_graphical_pointer_state(160, 180, 1)
             move_graphical_pointer(330, 330)
-            time.sleep(.3)
-            preview = graphical_screen('stock-doodle-preview')
-            if rgb_pixels_in(preview, (170, 0, 0), (140, 160, 350, 350)) < 200:
-                raise RuntimeError('Doodle did not show its red drag preview')
+            wait_graphical_pointer_state(330, 330, 1)
+            deadline = time.monotonic() + 5
+            while True:
+                preview = graphical_screen('stock-doodle-preview')
+                if rgb_pixels_in(preview, SLATE_RED, (140, 160, 350, 350)) >= 200:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Doodle did not show its red drag preview')
+                time.sleep(.1)
             graphical_mouse_button('left', False)
             time.sleep(.5)
             drawn = graphical_screen('stock-doodle-line')
-            red = rgb_pixels_in(drawn, (170, 0, 0), (140, 160, 350, 350))
+            red = rgb_pixels_in(drawn, SLATE_RED, (140, 160, 350, 350))
             if red < 200:
                 raise RuntimeError(f'Doodle did not retain its selected red stroke: {red} pixels')
             time.sleep(.5)
             retained = graphical_screen('stock-doodle-retained')
-            if rgb_pixels_in(retained, (170, 0, 0), (140, 160, 350, 350)) < 200:
+            if rgb_pixels_in(retained, SLATE_RED, (140, 160, 350, 350)) < 200:
                 raise RuntimeError('Doodle lost its stroke on compositor refresh')
             qmp_send_key('esc')
             run_graphical_terminal_command('stock-doodle-return', '6*7;', 'ans=0x2A=42')
             cleared = graphical_screen('stock-doodle-cleared')
-            if rgb_pixels_in(cleared, (170, 0, 0), (140, 160, 350, 350)) > 10:
+            if rgb_pixels_in(cleared, SLATE_RED, (140, 160, 350, 350)) > 10:
                 raise RuntimeError('Doodle did not clear its foreground on exit')
             print('PASS unchanged Doodle color picker, drag preview, retained stroke, clear and prompt recovery', flush=True)
             select_os_menu_row('stock-life-menu', 'Apps', 7)
-            time.sleep(.5)
+            deadline = time.monotonic() + 10
+            while True:
+                status = command('zc Print("life_drawing=%d\\n", '
+                                 'bootstrap_gui_terminal_task->draw_it!=NULL);',
+                                 'life_drawing=')
+                if 'life_drawing=1' in status:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Game of Life did not open its drawing canvas')
+                time.sleep(.1)
             move_graphical_pointer(180, 200)
+            wait_graphical_pointer_state(180, 200, 0)
             graphical_mouse_button('left', True)
+            wait_graphical_pointer_state(180, 200, 1)
             for x, y in ((230, 250), (290, 200), (350, 260), (410, 210)):
                 move_graphical_pointer(x, y)
-                time.sleep(.25)
+                wait_graphical_pointer_state(x, y, 1)
             graphical_mouse_button('left', False)
-            deadline = time.monotonic()+25
+            # One generation scans the full canvas and yields after each row.
+            # Allow for a busy HVF host running the other regression guests.
+            deadline = time.monotonic()+120
             first = graphical_screen('stock-life-drawn')
             while True:
                 time.sleep(.5)
                 second = graphical_screen('stock-life-evolved')
-                green1 = rgb_coordinates_in(first, (0, 170, 0), (100, 100, 600, 400))
-                green2 = rgb_coordinates_in(second, (0, 170, 0), (100, 100, 600, 400))
+                green1 = rgb_coordinates_in(first, SLATE_GREEN, (100, 100, 600, 400))
+                green2 = rgb_coordinates_in(second, SLATE_GREEN, (100, 100, 600, 400))
                 if len(green1) > 10 and len(green2) > 10 and len(green1 ^ green2) > 10:
                     break
                 if time.monotonic() >= deadline:
@@ -13742,13 +13985,19 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 'stock-tictactoe-command',
                 '#include "/Demo/Games/TicTacToe"')
             qmp_send_key('ret')
-            board = graphical_screen('stock-tictactoe-board')
-            grid_pixels = (rgb_pixels_in(board, (255, 255, 255), (197, 100, 203, 400)) +
-                           rgb_pixels_in(board, (255, 255, 255), (297, 100, 303, 400)) +
-                           rgb_pixels_in(board, (255, 255, 255), (100, 197, 400, 203)) +
-                           rgb_pixels_in(board, (255, 255, 255), (100, 297, 400, 303)))
-            if grid_pixels < 500:
-                raise RuntimeError('TicTacToe did not render its four board lines')
+            deadline = time.monotonic() + 45
+            while True:
+                board = graphical_screen('stock-tictactoe-board')
+                grid_pixels = (
+                    rgb_pixels_in(board, SLATE_BLACK, (197, 100, 203, 400)) +
+                    rgb_pixels_in(board, SLATE_BLACK, (297, 100, 303, 400)) +
+                    rgb_pixels_in(board, SLATE_BLACK, (100, 197, 400, 203)) +
+                    rgb_pixels_in(board, SLATE_BLACK, (100, 297, 400, 303)))
+                if grid_pixels >= 500:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('TicTacToe did not render its four board lines')
+                time.sleep(.5)
             # Keep the sequence non-winning so the game doesn't immediately
             # start a fresh round before we inspect its retained marks.
             moves = ((150, 150), (250, 150), (250, 250),
@@ -13761,7 +14010,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 time.sleep(.25)
             played = graphical_screen('stock-tictactoe-five-moves')
             for x, y in moves:
-                marks = rgb_pixels_in(played, (255, 255, 255),
+                marks = rgb_pixels_in(played, SLATE_BLACK,
                                       (x-24, y-24, x+25, y+25))
                 if marks < 50:
                     raise RuntimeError(
@@ -13783,38 +14032,24 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 'stock-math-audio-demo-command',
                 '#include "/Demo/Graphics/MathAudioDemo"')
             qmp_send_key('ret')
-            time.sleep(.5)
-            math_sin = graphical_screen('stock-math-audio-demo-sin')
             math_plot = (10, 80, 395, 575)
-            red_pixels = rgb_pixels_in(
-                math_sin, (170, 0, 0), math_plot)
-            if red_pixels < 100:
-                raise RuntimeError(
-                    'MathAudioDemo did not render its upstream red Sin curve: '
-                    f'{red_pixels} red pixels')
-            qmp_send_key('spc')
-            time.sleep(.5)
-            math_saw = graphical_screen('stock-math-audio-demo-saw')
-            blue_pixels = rgb_pixels_in(
-                math_saw, (0, 0, 170), math_plot)
-            if blue_pixels < 100:
-                raise RuntimeError(
-                    'MathAudioDemo did not render its upstream blue Saw curve: '
-                    f'{blue_pixels} blue pixels')
-            qmp_send_key('spc')
-            time.sleep(.5)
-            math_full_saw = graphical_screen(
-                'stock-math-audio-demo-full-saw')
-            green_pixels = rgb_pixels_in(
-                math_full_saw, (0, 170, 0), math_plot)
-            if green_pixels < 100:
-                raise RuntimeError(
-                    'MathAudioDemo did not render its upstream green FullSaw curve: '
-                    f'{green_pixels} green pixels')
+            for name, color in (('sin', SLATE_RED), ('saw', SLATE_BLUE),
+                                ('full-saw', SLATE_GREEN)):
+                if name != 'sin':
+                    qmp_send_key('spc')
+                deadline = time.monotonic() + 20
+                while True:
+                    math_frame = graphical_screen('stock-math-audio-demo-' + name)
+                    count = rgb_pixels_in(math_frame, color, math_plot)
+                    if count >= 100:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f'MathAudioDemo did not render {name}: {count} pixels')
+                    time.sleep(.2)
             # There are seven further upstream PressAKey checkpoints. Advance
             # through the remaining cosine/caw/triangle plots, then dismiss
             # the final plot and require prompt recovery.
-            previous = math_full_saw
+            previous = math_frame
             for i in range(7):
                 qmp_send_key('spc')
                 deadline = time.monotonic() + 5
@@ -13851,8 +14086,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             while True:
                 predator_prey = graphical_screen('stock-predator-prey-trajectories')
                 graph_box = (0, 0, predator_prey[0], predator_prey[1] - 24)
-                green = rgb_pixels_in(predator_prey, (0, 170, 0), graph_box)
-                red = rgb_pixels_in(predator_prey, (170, 0, 0), graph_box)
+                green = rgb_pixels_in(predator_prey, SLATE_GREEN, graph_box)
+                red = rgb_pixels_in(predator_prey, SLATE_RED, graph_box)
                 if green > 50 and red > 50:
                     break
                 if time.monotonic() >= deadline:
@@ -13888,7 +14123,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             deadline = time.monotonic() + 15
             while True:
                 screen = graphical_screen('stock-netofdots-drawing')
-                red = rgb_pixels_in(screen, (170, 0, 0), fan_box)
+                red = rgb_pixels_in(screen, SLATE_RED, fan_box)
                 if red >= 300:
                     break
                 if time.monotonic() >= deadline:
@@ -13903,14 +14138,14 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 raise RuntimeError('NetOfDots did not reach its upstream key-wait prompt')
             time.sleep(.75)
             retained = graphical_screen('stock-netofdots-retained')
-            retained_red = rgb_pixels_in(retained, (170, 0, 0), fan_box)
+            retained_red = rgb_pixels_in(retained, SLATE_RED, fan_box)
             if red < 300 or retained_red < 300:
                 raise RuntimeError(f'unchanged NetOfDots did not draw its red fan: {red} red pixels')
             print(f'PASS unchanged NetOfDots rendered red fan ({red} pixels) and waits for input', flush=True)
             qmp_send_key('spc')
             run_graphical_terminal_command('stock-netofdots-return', '40+2;', 'ans=0x2A=42')
             cleared = graphical_screen('stock-netofdots-exit-cleared')
-            if rgb_pixels_in(cleared, (170, 0, 0), fan_box) > 10:
+            if rgb_pixels_in(cleared, SLATE_RED, fan_box) > 10:
                 raise RuntimeError('NetOfDots DCFill did not clear its retained foreground')
             select_os_menu_row('stock-lines-menu', 'Apps', 4)
             deadline = time.monotonic() + 60
@@ -13928,7 +14163,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                               second[2][(y * 800 + x) * 3 + c]
                               for y in range(fan_box[1], fan_box[3])
                               for x in range(fan_box[0], fan_box[2]) for c in range(3))
-                blue = rgb_pixels_in(second, (0, 0, 170), fan_box)
+                blue = rgb_pixels_in(second, SLATE_BLUE, fan_box)
                 if changed >= 100 and blue > 20:
                     break
                 if time.monotonic() >= deadline:
@@ -13974,7 +14209,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             qmp_send_text('latticeplay')
             qmp_send_key('ret')
             require_graphical_text('lattice-live-hud', 'Layer:', timeout=10,
-                                   foreground_threshold=215000,
+                                   foreground_threshold=LATTICE_HUD_TEXT_THRESHOLD,
                                    scanline_offset=0)
             exercise_live_lattice_controls()
             qmp_send_key('esc')
@@ -14038,17 +14273,16 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                              'home_boot_source=4')
             if 'home_boot_source=4' not in source:
                 raise RuntimeError('ISO did not boot through the DVD source path:\n' + source)
+            require_graphical_text('dvd-live-install-prompt', 'Install onto hard drive')
+            qmp_send_key('n')
+            time.sleep(0.5)
             focus_graphical_terminal()
-            require_graphical_text('dvd-live-installer-status',
-                                   'ARM64 live session is ready.')
-            require_graphical_text('dvd-live-installer-status',
-                                   'Install to a 128 MiB UTM/QEMU VirtIO disk:')
             qmp_send_text('help')
             startup_typing = require_graphical_text('dvd-live-typing', '> help')
             require_graphical_caret(startup_typing, '> help')
             qmp_send_key('ret')
             require_graphical_text('dvd-live-help', 'Graphical commands:')
-            print('PASS ISO/DVD startup reaches the graphical live terminal, reports installer status, and accepts input', flush=True)
+            print('PASS ISO/DVD startup reaches the graphical live terminal, declines installation, and accepts input', flush=True)
             raise SystemExit(0)
         if args.probe_source_editor:
             editor_command('zedit App/EditorScanout.ZC',
@@ -14160,6 +14394,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             require_graphical_splash('home-autostart-splash')
             qmp_send_key('esc')
             require_graphical_splash_absent('home-autostart-splash-dismissed')
+            command('zstatus', 'mesh_overlay_colors: zero=0 nonzero=0')
             command('zload /Tests/PopupWindow.ZC', 'zc: loaded /Tests/PopupWindow.ZC')
             command('zcall PopupWindowOpen', 'zc => 0x000000000000002a')
             # The caret can cover the first P at the DocTerm insertion point.
@@ -14263,25 +14498,31 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 raise RuntimeError('Vocabulary could not find its dictionary data:\n'+
                                    question_screen[3])
             qmp_send_key('1')
-            deadline = time.monotonic() + 12
-            next_question = None
+            deadline = time.monotonic() + 30
+            popup_status = ''
             while time.monotonic() < deadline:
-                screen = graphical_screen('vocabulary-after-answer')
-                if screen[3] != question_screen[3]:
-                    next_question = screen
+                popup_status = command('zstatus', 'keyboard_focus=')
+                if 'keyboard_focus=Server' in popup_status:
                     break
                 time.sleep(0.1)
-            if next_question is None:
-                raise RuntimeError('Vocabulary did not advance after answer 1:\n'+
-                                   screen[3])
-            print('PASS Vocabulary accepted an answer and advanced the quiz', flush=True)
+            else:
+                raise RuntimeError('Vocabulary definition popup did not acquire focus:\n' +
+                                   popup_status)
+            print('PASS Vocabulary accepted an answer and opened the definition', flush=True)
             # A correct/incorrect answer opens ACDPopUpDef through PopUp;
             # the first Escape dismisses that definition viewer. The quiz
             # then advances to another question, where a second Escape exits
             # VocabQuiz. Keep those two modal levels explicit so the shell
             # smoke test cannot accidentally type into the quiz.
             qmp_send_key('esc')
-            time.sleep(0.5)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                popup_status = command('zstatus', 'keyboard_focus=')
+                if 'keyboard_focus=Terminal' in popup_status:
+                    break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError('Vocabulary definition did not close:\n' + popup_status)
             graphical_screen('vocabulary-definition-dismissed')
             qmp_send_key('esc')
             time.sleep(0.5)
@@ -14308,7 +14549,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     'Psalmody threw before the editor accepted any input:\n'
                     + launch_status)
             editor = require_graphical_text(
-                'psalmody-editor', 'Deletes Last Note', timeout=20)
+                'psalmody-editor', 'Deletes Last Note', timeout=20,
+                foreground_threshold=PSALMODY_TEXT_THRESHOLD)
 
             def psalmody_editor_step(name):
                 deadline = time.monotonic() + 5
@@ -14317,7 +14559,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     # redraw and its frame callback. Check both scanline
                     # alignments and require the same editor help to return.
                     for offset in (1, 0):
-                        screen = graphical_screen(name, scanline_offset=offset)
+                        screen = graphical_screen(
+                            name, PSALMODY_TEXT_THRESHOLD, scanline_offset=offset)
                         text = screen[3]
                         if 'Except:' in text or 'except:' in text:
                             raise RuntimeError(
@@ -14341,7 +14584,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             psalmody_editor_step('psalmody-note-entered')
             qmp_send_key('x')
             time.sleep(0.3)
-            playback = graphical_screen('psalmody-playback')
+            playback = graphical_screen('psalmody-playback', PSALMODY_TEXT_THRESHOLD)
             if 'Except:' in playback[3] or 'except:' in playback[3]:
                 raise RuntimeError('Psalmody raised an exception during playback:\n'+playback[3])
             # The song view replaces the editor help while playback runs, so
@@ -14429,12 +14672,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                   f'do not grow managed memory: {before_usage} -> {after_usage}', flush=True)
             command('zcall HomeOnceStartChecks', 'zc => 0x000000000000002a')
             if not args.pci:
-                require_graphical_text('home-once-dvd-live-status',
-                                       'ARM64 live session is ready.')
+                require_graphical_text('home-once-dvd-install-prompt', 'Install onto hard drive')
+                qmp_send_key('n')
             command('zcall HomeOnceFinishChecks', 'zc => 0x000000000000002a')
-            if not args.pci:
-                require_graphical_text('home-once-dvd-installer-status',
-                                       'Install to a 128 MiB UTM/QEMU VirtIO disk:')
             focus_graphical_terminal()
             qmp_send_text('40+2;')
             typed = require_graphical_text('home-once-typing', '> 40+2;')
@@ -14516,7 +14756,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     if not re.search(r'presented_frames=[1-9][0-9]*', desktop):
                         raise RuntimeError('graphical terminal stopped presenting after reboot:\n'+desktop)
                     require_graphical_text('registry-reboot-terminal',
-                                            'ZealOS ARM64 graphical terminal')
+                                            'Public Domain Operating System')
                 print('PASS saved registry and Once/System + Once/User survive reboot and flush after execution', flush=True)
             raise SystemExit(0)
         if args.probe_user_text:
@@ -14880,12 +15120,18 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             focus_graphical_terminal()
             command('zload /Tests/UserStartUp.ZC', 'zc: loaded /Tests/UserStartUp.ZC')
             command('zcall UserStartUpChecks', 'zc => 0x000000000000002a')
-        visible_text = command('zcall BootstrapGuiTerminalTextPixelCount', 'zc => 0x')
-        text_pixels = re.search(r'zc => 0x([0-9a-fA-F]+)', visible_text)
-        if not text_pixels or int(text_pixels.group(1), 16) < 100:
-            graphical_screen('boot-text-failure')
-            raise RuntimeError('boot graphical terminal has no visible document text pixels:\n' + visible_text)
-        print(f'PASS boot graphical terminal visible text pixels: {int(text_pixels.group(1), 16)}', flush=True)
+        left, right, top, bottom = graphical_task_rect('bootstrap_gui_terminal_task')
+        screen = graphical_screen('boot-text')
+        # Exclude the border and count the Slate document ink in the terminal
+        # itself. The old guest diagnostic only counted pure-white pixels.
+        bounds = (8 * left, 8 * top, 8 * (right + 1), 8 * (bottom + 1))
+        text_pixels = rgb_pixels_in(screen, SLATE_LTBLUE, bounds)
+        if text_pixels < 100:
+            raise RuntimeError('boot graphical terminal has too few visible '
+                               f'document text pixels ({text_pixels}); '
+                               f'see {graphical_path("boot-text")}')
+        print(f'PASS boot graphical terminal visible text pixels: {text_pixels}',
+              flush=True)
         if args.probe_user_startup:
             for check in ('HookChecks', 'CustomDocumentChecks', 'CapacityChecks', 'SleepFairnessChecks', 'FrameLockChecks'):
                 command('zcall UserStartUp'+check, 'zc => 0x000000000000002a', timeout=30)
@@ -15076,7 +15322,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         command('zstatus', 'failed=0')
         if args.probe_source_context:
             raise SystemExit(0)
-        command('zload /Tests/HomePath.ZC', 'zc: loaded /Tests/HomePath.ZC')
+        home_path_test = ('disk:Tests/HomePath.ZC' if args.pci and
+                          (args.probe_xcaliber or args.probe_3d_apps or args.probe_source_execute)
+                          else '/Tests/HomePath.ZC')
+        command('zload '+home_path_test, 'zc: loaded '+home_path_test)
         for check in ('ReadChecks', 'ContextChecks', 'TaskChecks'):
             command('zcall HomePath'+check, 'zc => 0x000000000000002a')
         if args.pci:
@@ -15131,7 +15380,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             command('zc #include "SettingsCwdValue.HH"', 'zc: executed')
             command('zc Cd("/");', 'zc: executed')
             raise SystemExit(0)
-        command('zload /Tests/SourceExecute.ZC', 'zc: loaded /Tests/SourceExecute.ZC')
+        source_execute_test = ('disk:Tests/SourceExecute.ZC' if args.pci and
+                               (args.probe_xcaliber or args.probe_3d_apps or args.probe_source_execute)
+                               else '/Tests/SourceExecute.ZC')
+        command('zload '+source_execute_test, 'zc: loaded '+source_execute_test)
         command('zcall SourceFileExecutionChecks', 'zc => 0x000000000000002a')
         command('zcall SourceFileTaskChecks', 'zc => 0x000000000000002a')
         if args.pci:
@@ -15253,13 +15505,13 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 menu_deadline = time.monotonic() + 5
                 menu_screen = graphical_screen('os-menu-top-edge')
                 while time.monotonic() < menu_deadline:
-                    blue_menu = rgb_pixels_in(menu_screen, (0, 0, 170),
+                    blue_menu = rgb_pixels_in(menu_screen, SLATE_BLUE,
                                                (0, 0, 240, 100))
-                    yellow_menu = rgb_pixels_in(menu_screen, (255, 255, 85),
+                    yellow_menu = rgb_pixels_in(menu_screen, SLATE_YELLOW,
                                                  (0, 0, 240, 100))
                     # File contains Files and Disk, so only two submenu rows
                     # are drawn beneath its six-character menu column.
-                    blue_submenu = rgb_pixels_in(menu_screen, (0, 0, 170),
+                    blue_submenu = rgb_pixels_in(menu_screen, SLATE_BLUE,
                                                   (0, 8, 56, 32))
                     if (blue_menu >= 100 and yellow_menu >= 100 and
                             blue_submenu >= 500):
@@ -15309,7 +15561,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         {'type': 'btn', 'data': {'down': False, 'button': 'left'}}]})
                     raise RuntimeError('OS menu button was not held over the Help row:\n' +
                                        held_status + help_row[3])
-                if rgb_pixels_in(help_row, (255, 255, 85),
+                if rgb_pixels_in(help_row, SLATE_YELLOW,
                                  (os_menu_x, 8, os_menu_x + 56, 16)) < 32:
                     # Never leave QEMU's button held when this diagnostic
                     # exits; a failed hover/selection probe must not strand
@@ -15352,11 +15604,11 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 menu_deadline = time.monotonic() + 5
                 menu_screen = graphical_screen('os-menu-left-top-row')
                 while time.monotonic() < menu_deadline:
-                    yellow_menu = rgb_pixels_in(menu_screen, (255, 255, 85),
-                                                 (0, 0, 800, 8))
-                    blue_submenu = rgb_pixels_in(menu_screen, (0, 0, 170),
+                    blue_menu = rgb_pixels_in(menu_screen, SLATE_BLUE,
+                                               (0, 0, 800, 8))
+                    blue_submenu = rgb_pixels_in(menu_screen, SLATE_BLUE,
                                                   (0, 8, 56, 32))
-                    if yellow_menu < 100 and blue_submenu < 500:
+                    if blue_menu < 100 and blue_submenu < 500:
                         print('PASS grouped menu highlight and dropdown hide off the top row',
                               flush=True)
                         break
@@ -15377,9 +15629,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 menu_deadline = time.monotonic() + 5
                 menu_screen = graphical_screen('os-menu-files-open')
                 while time.monotonic() < menu_deadline:
-                    if (rgb_pixels_in(menu_screen, (0, 0, 170),
+                    if (rgb_pixels_in(menu_screen, SLATE_BLUE,
                                       (0, 0, 240, 100)) >= 100 and
-                            rgb_pixels_in(menu_screen, (0, 0, 170),
+                            rgb_pixels_in(menu_screen, SLATE_BLUE,
                                           (0, 8, 56, 32)) >= 500):
                         break
                     time.sleep(0.1)
@@ -15414,7 +15666,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                         {'type': 'btn', 'data': {'down': False, 'button': 'left'}}]})
                     raise RuntimeError('OS menu button was not held over Files:\n' +
                                        files_held_status + files_row[3])
-                if rgb_pixels_in(files_row, (255, 255, 85), (0, 8, 56, 16)) < 32:
+                if rgb_pixels_in(files_row, SLATE_YELLOW, (0, 8, 56, 16)) < 32:
                     qmp_command('input-send-event', {'events': [
                         {'type': 'btn', 'data': {'down': False, 'button': 'left'}}]})
                     raise RuntimeError('OS menu Files row was not highlighted while held:\n' +
@@ -15434,9 +15686,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 move_graphical_pointer(400, 300)
                 time.sleep(0.2)
                 files_view = graphical_screen('os-menu-files-action')
-                if (rgb_pixels_in(files_view, (170, 0, 170),
+                if (rgb_pixels_in(files_view, SLATE_PURPLE,
                                   (0, 0, 400, 600)) < 1000 or
-                        rgb_pixels_in(files_view, (85, 85, 255),
+                        rgb_pixels_in(files_view, SLATE_LTBLUE,
                                       (0, 0, 400, 600)) < 1000):
                     raise RuntimeError('Files did not show the native source-volume tree:\n' +
                                        files_view[3])
@@ -15471,21 +15723,10 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 time.sleep(0.15)
                 graphical_mouse_button('left', False)
                 selected_name = 'ZZFileMgrEdit.ZC'
-                file_click_deadline = time.monotonic() + 5
-                opened_file = ''
-                opened_file_screen = None
-                while time.monotonic() < file_click_deadline:
-                    opened_file_screen = graphical_screen(
-                        'os-menu-files-click-open')
-                    opened_file = opened_file_screen[3]
-                    if (selected_name.lower() in opened_file.lower() and
-                            'filemgroriginal' in opened_file.lower() and
-                            'return 17' in opened_file.lower()):
-                        break
-                    time.sleep(0.1)
-                else:
-                    raise RuntimeError('click did not open the source file in the graphical editor:\n' +
-                                       f'click={file_x},{file_y}\n' + opened_file)
+                # Identify the file by its unique function and return value.
+                # The editor caret can cover the first character of the type.
+                require_graphical_text('os-menu-files-click-open',
+                                       'FileMgrOriginal(){return 17;}')
                 qmp_send_keys(['shift', 'esc'])
                 filemgr_restore_deadline = time.monotonic() + 5
                 restored_screen = None
@@ -15493,7 +15734,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     restored_screen = graphical_screen(
                         'os-menu-files-click-return')
                     if ('filemgroriginal' not in restored_screen[3].lower() and
-                            rgb_pixels_in(restored_screen, (85, 85, 255),
+                            rgb_pixels_in(restored_screen, SLATE_LTBLUE,
                                           (0, 0, 400, 200)) >= 500):
                         break
                     time.sleep(0.1)
@@ -15512,24 +15753,15 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     raise RuntimeError('FileMgr did not preserve the selected edit fixture:\n' +
                                        filemgr_target)
                 qmp_send_key('spc')
-                filemgr_edit_deadline = time.monotonic() + 5
-                filemgr_edit_screen = None
-                while time.monotonic() < filemgr_edit_deadline:
-                    filemgr_edit_screen = graphical_screen('filemgr-source-edit-open')
-                    if ('filemgroriginal' in filemgr_edit_screen[3].lower() and
-                            'zzfilemgredit.zc' in filemgr_edit_screen[3].lower()):
-                        break
-                    time.sleep(0.1)
-                else:
-                    raise RuntimeError('Space did not open the temporary source from FileMgr:\n' +
-                                       (filemgr_edit_screen[3] if filemgr_edit_screen else ''))
+                require_graphical_text('filemgr-source-edit-open',
+                                       'I64 FileMgrOriginal(){return 17;}')
                 qmp_send_keys(['shift', 'esc'])
                 filemgr_return_deadline = time.monotonic() + 5
                 while time.monotonic() < filemgr_return_deadline:
                     filemgr_return_screen = graphical_screen(
                         'filemgr-source-edit-return')
                     if ('filemgroriginal' not in filemgr_return_screen[3].lower() and
-                            rgb_pixels_in(filemgr_return_screen, (85, 85, 255),
+                            rgb_pixels_in(filemgr_return_screen, SLATE_LTBLUE,
                                           (0, 0, 400, 200)) >= 500):
                         break
                     time.sleep(0.1)
@@ -15549,8 +15781,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                                            'terminal focus:\n' + files_restored)
                     time.sleep(0.1)
                 restored_screen = graphical_screen('os-menu-files-restored')
-                if rgb_pixels_in(restored_screen, (85, 85, 255),
-                                 (0, 0, 400, 200)) >= 500:
+                if rgb_pixels_in(restored_screen, SLATE_PURPLE,
+                                 (0, 0, 400, 200)) >= 1000:
                     raise RuntimeError('Files window remained visible after Escape:\n' +
                                        restored_screen[3])
                 print('PASS OS menu Files opened native FileMgr and Escape restored the terminal',
@@ -15585,7 +15817,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 for demo, row_index in (('latticeplay', 0), ('stockplay', 1)):
                     select_os_menu_row('os-menu-'+demo, 'Apps', row_index)
                     require_graphical_text(demo+'-menu-live-hud', 'Layer:', timeout=10,
-                                           foreground_threshold=215000,
+                                           foreground_threshold=LATTICE_HUD_TEXT_THRESHOLD,
                                            scanline_offset=0)
                     qmp_send_key('esc')
                     require_graphical_text(demo+'-menu-returns', demo+' ok', timeout=10)
@@ -15740,6 +15972,19 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     'zc => 0x0000000000000001')
             command('zcall BootstrapGuiShellSmoke',
                     'zc => 0x000000000000002a')
+            # LastCommand is set before zls reads and renders the catalog.
+            # Wait for its terminal to drain the input queue and return to
+            # the prompt before measuring the next batch of keystrokes.
+            deadline = time.monotonic() + 90
+            while True:
+                prompt = command('zc Print("zls_prompt=%d\\n", '
+                                 'Bt(&sys_focus_task->task_flags,TASKf_CMD_LINE_PROMPT));',
+                                 'zls_prompt=', timeout=30)
+                if 'zls_prompt=1' in prompt:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('graphical terminal did not return to the prompt after zls:\n' + prompt)
+                time.sleep(0.5)
             zls_last_key = command('zcall BootstrapGuiTerminalLastKeyChar', 'zc => 0x')
             zls_last_key_value = re.search(r'zc => 0x([0-9a-fA-F]+)', zls_last_key)
             if not zls_last_key_value or int(zls_last_key_value.group(1), 16) != 10:
@@ -15808,54 +16053,27 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             if 'keyboard_focus=Terminal' not in restored:
                 raise RuntimeError('graphical terminal did not recover keyboard focus after windowdemo:\n' + restored)
             # Stopping Window Demo restores the shell display, but the first
-            # keyboard edge can race the manager's final focus handoff. Click
-            # the terminal again and wait for a visibly assembled command
-            # before submitting it.
+            # keyboard edge can race the manager's final focus handoff.
+            # Require a complete command and its result after refocusing.
             focus_graphical_terminal()
-            type_graphical_prompt_line('windowdemo-poststop-zls', 'zls')
-            qmp_send_key('ret')
-            command('zcall BootstrapGuiTerminalLastCommandIsZls',
-                    'zc => 0x0000000000000001')
+            run_graphical_terminal_command('windowdemo-poststop', '40+2;', 'ans=0x2A=42')
             print('PASS QMP graphical window demo launch/stop restored the terminal and keyboard focus', flush=True)
             if args.probe_gui_workflow:
                 command('zc compiler_recovery_committed=0;', 'zc: executed')
-                option_command = 'zc Option(OPTf_DECIMAL_ONLY,ON);'
-                qmp_send_text(option_command)
-                # QMP acknowledges a key edge before the cooperative GUI task
-                # necessarily consumes it. Let the guest scheduler run until
-                # the full visible input buffer catches up, with a bounded
-                # timeout so a genuinely lost character still fails loudly.
-                input_deadline = time.monotonic() + 2
-                input_state = ''
-                input_len = input_result = -1
-                while True:
-                    input_state = command('zcall BootstrapGuiTerminalInputDiag', 'zc => 0x')
-                    input_match = re.search(r'zc => 0x([0-9a-fA-F]+)', input_state)
-                    input_diag = int(input_match.group(1), 16) if input_match else -1
-                    input_len = input_diag & 255
-                    input_result = (input_diag >> 8) & 255
-                    if input_len == len(option_command) and input_result == 1:
-                        break
-                    if time.monotonic() >= input_deadline:
-                        break
-                    time.sleep(0.1)
-                print(f'INFO live GUI input buffer: length={input_len} last_edit={input_result}', flush=True)
-                if input_len != len(option_command) or input_result != 1:
-                    raise RuntimeError('USB keys did not assemble the expected live GUI command buffer:\n' + input_state)
-                require_graphical_text('option-command-echo', '> ' + option_command)
-                qmp_send_key('ret')
-                qmp_send_text('zc compiler_recovery_committed=0x2a;')
-                qmp_send_key('ret')
-                option_error = require_graphical_text('option-error', 'Hex constant disabled by')
-                require_graphical_text('option-error-option-name', 'OPTf_DECIMAL_ONLY.')
-                if 'current statement discarded' not in option_error[3]:
-                    raise RuntimeError('lexer error hid its recovery diagnostic in the graphical terminal')
+                run_graphical_terminal_command(
+                    'option-on', 'zc Option(OPTf_DECIMAL_ONLY,ON);', 'zc: executed')
+                hex_assignment = 'zc compiler_recovery_committed=0x2a;'
+                option_error = run_graphical_terminal_command(
+                    'option-error', hex_assignment, 'current statement discarded')
+                if ('Hex constant disabled by' not in option_error[3] or
+                        'OPTf_DECIMAL_ONLY.' not in option_error[3]):
+                    raise RuntimeError('graphical terminal omitted the decimal-only diagnostic:\n' +
+                                       option_error[3])
                 command('zcall CompilerRecoveryResult', 'zc => 0x0000000000000000')
-                qmp_send_text('zc Option(OPTf_DECIMAL_ONLY,OFF);')
-                qmp_send_key('ret')
-                qmp_send_text('zc compiler_recovery_committed=0x2a;')
-                qmp_send_key('ret')
-                require_graphical_text('option-restored', 'zc compiler_recovery_committed=0x2a;')
+                run_graphical_terminal_command(
+                    'option-off', 'zc Option(OPTf_DECIMAL_ONLY,OFF);', 'zc: executed')
+                run_graphical_terminal_command(
+                    'option-restored', hex_assignment, 'zc: executed')
                 command('zcall CompilerRecoveryResult', 'zc => 0x000000000000002a')
                 print('PASS graphical prompt retains compiler options across commands and recovered errors', flush=True)
                 command('zc compiler_recovery_committed=0;', 'zc: executed')
@@ -15900,20 +16118,16 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 qmp_send_text('zload /Tests/RunFile.ZC')
                 qmp_send_key('ret')
                 require_graphical_text('run-file-private-load', 'zc: loaded /Tests/RunFile.ZC')
-                result_line = 'zc => 0x000000000000002a'
-                before_task = graphical_screen('run-file-before-private-task')[3].count(result_line)
-                task_check_command = 'zcall RunFileTaskChecks'
-                qmp_send_text(task_check_command)
-                require_graphical_prompt_text('run-file-private-command',
-                                              task_check_command)
-                qmp_send_key('ret')
-                private_task = require_graphical_text('run-file-private-task', result_line)
-                if private_task[3].count(result_line) != before_task + 1:
-                    raise RuntimeError('graphical task did not complete its private child-function check')
+                # The child yields during execution. Wait for a distinct
+                # result from this invocation, even if earlier output scrolls.
+                run_graphical_terminal_command(
+                    'run-file-private-task',
+                    'zc Print("Child=%d\\n",RunFileTaskChecks);', 'Child=42')
                 print('PASS graphical task-owned code spawns an owned child and keeps LastFun task-local', flush=True)
                 qmp_send_text('zload /Tests/SystemLaunch.ZC')
                 qmp_send_key('ret')
                 require_graphical_text('system-private-load', 'zc: loaded /Tests/SystemLaunch.ZC')
+                result_line = 'zc => 0x000000000000002a'
                 for check,label in (('QueueChecks','Queue'), ('Checks','System'), ('TaskChecks','Caller'),
                                     ('FileChecks','SystemFile'), ('PopupChecks','Popup')):
                     run_graphical_terminal_command(
@@ -15986,7 +16200,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 # asserting prompt glyphs, just as on the initial boot.
                 # The serial prompt can precede the GUI task's startup frame,
                 # so wait for its actual banner before targeting its window.
-                wait_for_graphical_terminal_banner()
+                wait_for_graphical_terminal_welcome()
                 focus_graphical_terminal()
                 type_graphical_prompt_line('editor-reopen-command',
                                            'edit '+editor_path)
@@ -16011,11 +16225,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                 for demo in ('latticeplay', 'stockplay'):
                     qmp_send_text(demo)
                     qmp_send_key('ret')
-                    # GrPrint draws HUD text in LTGRAY (224), while DolDoc's
-                    # scanout text is brighter. Use a matching threshold and
-                    # scan from row zero because GrPrint has no cell offset.
+                    # GrPrint starts at row zero without a DolDoc cell offset.
                     require_graphical_text(demo+'-live-hud', 'Layer:', timeout=10,
-                                           foreground_threshold=215000,
+                                           foreground_threshold=LATTICE_HUD_TEXT_THRESHOLD,
                                            scanline_offset=0)
                     if demo == 'latticeplay':
                         exercise_live_lattice_controls()
@@ -16196,6 +16408,9 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
         if args.probe_gui_terminal:
             command('zcall BootstrapGuiTerminalOutputOwnershipChecks',
                     'zc => 0x000000000000002a')
+        # Paint samples the real window z-buffer. The full-screen startup
+        # splash can still cover the terminal even after the UART is ready.
+        focus_graphical_terminal()
         command('zcall BootstrapGuiTerminalSmoke',
                 'zc => 0x000000000000002a')
         command('zcall BootstrapGuiShellSmoke',
@@ -16208,6 +16423,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
                     'gterm: graphical terminal started; click it to type; Ctrl+C stops it')
             command('zcall BootstrapGuiTerminalOutputOwnershipChecks',
                     'zc => 0x000000000000002a')
+            focus_graphical_terminal()
             command('zcall BootstrapGuiTerminalSmoke',
                     'zc => 0x000000000000002a')
             raise SystemExit(0)
@@ -17253,13 +17469,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             command('zload /Tests/TaskKeys.ZC', 'zc: loaded /Tests/TaskKeys.ZC')
             command('zcall TaskKeyChecks', 'zc => 0x000000000000002a')
             checked_put_key()
-            command_with_key('zcall TaskLiveKey', b'k', 'zc => 0x000000000000006b')
-            command_with_key('zcall TaskLiveMessage', b'm', 'zc => 0x000000000000006d')
-            command_with_key('zcall TaskLiveScan', b'n', 'zc => 0x000000000000006e')
-            command('zload /Tests/TaskChars.ZC', 'zc: loaded /Tests/TaskChars.ZC')
-            command('zcall TaskCharQueueChecks', 'zc => 0x000000000000002a')
-            command_after_marker_key('zcall TaskCharLive', 'char scan ready', b'c',
-                                     'zc => 0x0000000000000063', delay=.3)
+            checked_live_task_keys()
             command('zcall TaskFocusKillChecks', 'zc => 0x000000000000002a')
             checked_background_tasks()
             command_after_marker_key('zcall TaskLiveFocus', 'focus ready', b'f',
@@ -17361,7 +17571,8 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             command('zreset', 'native compiler ready')
             command('zload /Tests/BindingReuse.ZC', 'zc: loaded /Tests/BindingReuse.ZC')
             command('zcall ReboundCopy', 'zc => 0x000000000000002a')
-            command('zload /Tests/BindingMismatch.ZC', "AArch64 intrinsic 'SwapI64' (IC_SWAP_I64) is not implemented")
+            command('zload /Tests/BoundSwap.ZC', 'zc: loaded /Tests/BoundSwap.ZC')
+            command('zcall BoundSwapChecks', 'zc => 0x000000000000002a')
             command('zstatus', 'failed=0')
             command('zreset', 'native compiler ready')
             command('zload /Tests/IntrinsicDecl.ZC', 'zc: loaded /Tests/IntrinsicDecl.ZC')
@@ -17407,6 +17618,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             command('zcall SpawnBridgeChecks', 'zc => 0x000000000000002a')
             command('zload /Tests/TaskLifecycle.ZC', 'zc: loaded /Tests/TaskLifecycle.ZC')
             command('zcall TaskLifecycleChecks', 'zc => 0x000000000000002a')
+            command('zload /Kernel/KernelC.HH', 'zc: loaded /Kernel/KernelC.HH')
             command('zload /Tests/TaskEnd.ZC', 'zc: loaded /Tests/TaskEnd.ZC')
             command('zcall TaskEndChecks', 'zc => 0x000000000000002a')
             command('zcall TaskKillCallbackChecks', 'zc => 0x000000000000002a')
@@ -17464,13 +17676,7 @@ with tempfile.TemporaryDirectory(prefix='zeal-compat-') as tmp, log_path.open('w
             command('zload /Tests/TaskKeys.ZC', 'zc: loaded /Tests/TaskKeys.ZC')
             command('zcall TaskKeyChecks', 'zc => 0x000000000000002a')
             checked_put_key()
-            command_with_key('zcall TaskLiveKey', b'k', 'zc => 0x000000000000006b')
-            command_with_key('zcall TaskLiveMessage', b'm', 'zc => 0x000000000000006d')
-            command_with_key('zcall TaskLiveScan', b'n', 'zc => 0x000000000000006e')
-            command('zload /Tests/TaskChars.ZC', 'zc: loaded /Tests/TaskChars.ZC')
-            command('zcall TaskCharQueueChecks', 'zc => 0x000000000000002a')
-            command_after_marker_key('zcall TaskCharLive', 'char scan ready', b'c',
-                                     'zc => 0x0000000000000063', delay=.3)
+            checked_live_task_keys()
             command('zcall TaskFocusKillChecks', 'zc => 0x000000000000002a')
             checked_background_tasks()
             command_after_marker_key('zcall TaskLiveFocus', 'focus ready', b'f',

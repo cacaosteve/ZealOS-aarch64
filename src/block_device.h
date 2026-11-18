@@ -40,6 +40,14 @@ static int zbd_virtio_flush(void) {
     return virtio_blk_flush_abs();
 }
 
+static int zbd_mmio_read(void *buf, uint64_t sector, uint32_t count) {
+    return virtio_blk_read(buf, sector, count);
+}
+
+static int zbd_mmio_write(const void *buf, uint64_t sector, uint32_t count) {
+    return virtio_blk_write(buf, sector, count);
+}
+
 static int zbd_range_inside(uint64_t base, uint64_t sectors,
                             uint64_t capacity) {
     return sectors && base <= capacity && sectors <= capacity - base;
@@ -53,33 +61,53 @@ static int zbd_bind(const struct zeal_block_backend *backend) {
         !backend->read_abs || !backend->write_abs ||
         (backend->flush_supported && !backend->flush) ||
         !zbd_range_inside(backend->redsea_lba, backend->redsea_sectors,
-                          backend->sectors) ||
-        !zbd_range_inside(backend->source_a_lba, backend->source_a_sectors,
-                          backend->sectors) ||
-        !zbd_range_inside(backend->source_b_lba, backend->source_b_sectors,
                           backend->sectors))
         return 0;
-    /* Keep each published region disjoint, so filesystem writes cannot
-     * overwrite the source-store banks or vice versa. */
-    uint64_t rs_end = backend->redsea_lba + backend->redsea_sectors;
-    uint64_t a_end = backend->source_a_lba + backend->source_a_sectors;
-    uint64_t b_end = backend->source_b_lba + backend->source_b_sectors;
-    if (!(rs_end <= backend->source_a_lba ||
-          a_end <= backend->redsea_lba) ||
-        !(rs_end <= backend->source_b_lba ||
-          b_end <= backend->redsea_lba) ||
-        !(a_end <= backend->source_b_lba ||
-          b_end <= backend->source_a_lba))
+    if (backend->source_a_sectors || backend->source_b_sectors) {
+        if (!zbd_range_inside(backend->source_a_lba, backend->source_a_sectors,
+                              backend->sectors) ||
+            !zbd_range_inside(backend->source_b_lba, backend->source_b_sectors,
+                              backend->sectors))
+            return 0;
+        /* Keep RedSea and both source banks disjoint. */
+        uint64_t rs_end = backend->redsea_lba + backend->redsea_sectors;
+        uint64_t a_end = backend->source_a_lba + backend->source_a_sectors;
+        uint64_t b_end = backend->source_b_lba + backend->source_b_sectors;
+        if (!(rs_end <= backend->source_a_lba ||
+              a_end <= backend->redsea_lba) ||
+            !(rs_end <= backend->source_b_lba ||
+              b_end <= backend->redsea_lba) ||
+            !(a_end <= backend->source_b_lba ||
+              b_end <= backend->source_a_lba))
+            return 0;
+    } else if (backend->source_a_lba || backend->source_b_lba) {
         return 0;
+    }
     g_zbd = *backend;
     g_zbd.ready = 1;
     return 1;
 }
 
-/* Keep the UTM layout identical while allowing a later Pi SD backend to
- * publish the same logical volumes at different absolute card LBAs. */
+static int zbd_discover_and_bind_data_partition(
+    const struct zeal_block_backend *device);
+
 static int zbd_bind_virtio(void) {
-    if (!virtio_blk_absolute_ready() || g_vb.xport != VB_XPORT_PCI)
+    if (g_vb.xport == VB_XPORT_MMIO) {
+        /* The ISO's legacy scratch disk is a whole RedSea volume. Use the
+         * MMIO driver's bounded volume I/O and leave both source banks absent. */
+        if (!virtio_blk_ready() || virtio_blk_full_capacity() != ZEAL_RS_SECTS)
+            return 0;
+        const struct zeal_block_backend legacy = {
+            .max_sectors = virtio_blk_max_sectors(),
+            .sectors = ZEAL_RS_SECTS,
+            .device_sectors = ZEAL_RS_SECTS,
+            .redsea_sectors = ZEAL_RS_SECTS,
+            .read_abs = zbd_mmio_read,
+            .write_abs = zbd_mmio_write,
+        };
+        return zbd_bind(&legacy);
+    }
+    if (!virtio_blk_absolute_ready())
         return 0;
     const struct zeal_block_backend backend = {
         .flush_supported = g_vb.flush_supported,
@@ -97,6 +125,14 @@ static int zbd_bind_virtio(void) {
         .write_abs = zbd_virtio_write_abs,
         .flush = zbd_virtio_flush,
     };
+    if (zbd_discover_and_bind_data_partition(&backend)) {
+        g_vb.lba_base = g_zbd.lba_offset;
+        g_vb.capacity = g_zbd.redsea_sectors;
+        return 1;
+    }
+    /* Only known legacy sizes may use the unpartitioned legacy windows. */
+    if (backend.device_sectors != ZEAL_DISK_SECTS &&
+        backend.device_sectors != ZEAL_OLD_DISK_SECTS) return 0;
     return zbd_bind(&backend);
 }
 

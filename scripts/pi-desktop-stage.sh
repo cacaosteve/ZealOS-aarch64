@@ -36,10 +36,10 @@ animated Z splash. In a guest terminal try 40+2; then Dir, usbstatus, and
 psdread. psdread initializes the SD controller and reads the card's partition
 table; it does not write sectors. The current full-card FAT-only layout is
 expected to report no ZealOS data partition. On a card flashed from the new
-Pi image, `psdopen` binds the unique 0xDA data partition and enables bounded
-disk writes only within it. The image builder initializes the two append-only
+Pi image, startup binds the unique validated 0xDA data partition and enables
+bounded disk writes only within it. `psdopen` can retry the binding. The image builder initializes the two append-only
 source banks and a full-size RedSea volume containing `/Home` and `/Tmp`.
-After `psdopen`, ordinary `FileWrite` create/replace, `FileDel` for regular
+Once the partition is bound, ordinary `FileWrite` create/replace, `FileDel` for regular
 files, `DirMake`, empty-directory deletion, and recursive `DelTree` are enabled
 within existing directory capacity. Rename and automatic directory growth
 are not. `.ZC` saves and deletes use the separate source banks. `rspersist` is
@@ -52,8 +52,10 @@ Confirm keyboard input, pointer movement and menu clicks. Capture the desktop
 and command output. If startup stops, capture the last PI-DESKTOP-2/zc/USB
 message; the second Limine entry is the diagnostic recovery path.
 
-USB storage remains read-only. The native source writer stays unbound until
-`psdopen` is run. Bundled sources come from the boot module, not VirtIO.
+USB storage remains read-only. The desktop uses the firmware-loaded source
+archive by default. If a USB installer populated the SD data partition, it
+loads the installed archive. The live USB installer does not automatically
+bind its target SD card.
 This staging script prepares files only; it does not flash a card. Physical
 SD read/write, flush, cold-boot persistence, and app acceptance remain open.
 EOF

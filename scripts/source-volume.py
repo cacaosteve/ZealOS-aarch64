@@ -26,6 +26,53 @@ FILE_MAGIC = b'ZCFILE1\0'
 DELETE_MAGIC = b'ZCDEL1\0\0'
 MAX_NAME = 95
 MAX_FILE = 8 * 1024 * 1024
+ZEAL_DATA_GUID = bytes.fromhex('6c61657a736f52416d36340000000001')
+
+
+def configure_banks(path):
+    """Use the two banks at the end of a designated GPT data partition."""
+    global BANK_A_START, BANK_B_START, START
+    with path.open('rb') as disk:
+        size = path.stat().st_size
+        if size % SECTOR:
+            raise ValueError('disk size is not sector aligned')
+        disk.seek(SECTOR)
+        header = disk.read(SECTOR)
+        if header[:8] != b'EFI PART':
+            return
+        header_size = struct.unpack_from('<I', header, 12)[0]
+        if not 92 <= header_size <= SECTOR:
+            raise ValueError('invalid GPT header size')
+        checked = bytearray(header[:header_size])
+        expected_crc = struct.unpack_from('<I', checked, 16)[0]
+        checked[16:20] = bytes(4)
+        if zlib.crc32(checked) != expected_crc:
+            raise ValueError('invalid GPT header checksum')
+        table_lba, count, entry_size, table_crc = struct.unpack_from('<QIII', header, 72)
+        table_size = count * entry_size
+        if (not count or count > 4096 or entry_size < 128 or
+                table_lba * SECTOR + table_size > size):
+            raise ValueError('invalid GPT partition table')
+        disk.seek(table_lba * SECTOR)
+        table = disk.read(table_size)
+        if len(table) != table_size or zlib.crc32(table) != table_crc:
+            raise ValueError('invalid GPT partition table checksum')
+        matches = []
+        for offset in range(0, table_size, entry_size):
+            entry = table[offset:offset + entry_size]
+            if entry[:16] == ZEAL_DATA_GUID:
+                matches.append(struct.unpack_from('<QQ', entry, 32))
+        if not matches:
+            return
+        if len(matches) != 1:
+            raise ValueError('multiple ZealOS data partitions')
+        first, last = matches[0]
+        bank_sectors = BANK_A_SECTORS + BANK_B_SECTORS
+        if first > last or last >= size // SECTOR or last - first + 1 <= bank_sectors:
+            raise ValueError('invalid ZealOS data partition bounds')
+        BANK_A_START = last + 1 - bank_sectors
+        BANK_B_START = BANK_A_START + BANK_A_SECTORS
+        START = BANK_A_START
 
 
 def valid_name(name):
@@ -226,6 +273,113 @@ def merge(disk, bundle_path, replace_names=()):
           f'{pos}/{SECTORS} sectors used')
 
 
+def source_bundle(path):
+    """Read source records from a trusted, complete baseline or new bundle."""
+    files = {}
+    with tarfile.open(path) as bundle:
+        for member in bundle:
+            if not member.isfile() or not member.name.endswith(('.ZC', '.HH')):
+                continue
+            valid_name(member.name)
+            if member.name in files or member.size > MAX_FILE:
+                raise ValueError(f'duplicate or oversized bundled source: {member.name}')
+            stream = bundle.extractfile(member)
+            if stream is None:
+                raise ValueError(f'missing bundled source: {member.name}')
+            data = stream.read()
+            if len(data) != member.size:
+                raise ValueError(f'truncated bundled source: {member.name}')
+            files[member.name] = data
+    return files
+
+
+def merge_baseline(disk, baseline_path, bundle_path, test_stop_before_publish=False):
+    """Build a merged inactive bank; preserve edits and deletion masks.
+
+    Host-side prototype only. This does not coordinate the bank commit with
+    EFI boot configuration and must not be presented as a complete upgrade.
+    """
+    global START, SECTORS
+    baseline, incoming = source_bundle(baseline_path), source_bundle(bundle_path)
+    with disk.open('r+b') as f:
+        _, current, deleted = scan(f, with_deleted=True)
+        source_start, source_sectors = START, SECTORS
+        _, generation = select_bank(f)
+        if generation == 0xffffffff:
+            raise ValueError('source generation exhausted')
+        target = BANK_B_START if source_start == BANK_A_START else BANK_A_START
+        target_sectors = BANK_B_SECTORS if source_start == BANK_A_START else BANK_A_SECTORS
+        merged, refreshed, preserved, added = {}, 0, 0, 0
+        for name, (pos, length, crc) in current.items():
+            f.seek((source_start + pos + 1) * SECTOR)
+            data = f.read(length)
+            if len(data) != length or zlib.crc32(data) != crc:
+                raise ValueError(f'bad source checksum: {name}')
+            # Byte equality with the old bundle is required before replacing
+            # an existing file. Unknown baselines are always preserved.
+            if name in baseline and name in incoming and data == baseline[name]:
+                replacement = incoming[name]
+                refreshed += replacement != data
+                merged[name] = replacement
+            else:
+                merged[name] = data
+                preserved += 1
+        for name, data in incoming.items():
+            if name not in merged and name not in deleted:
+                merged[name] = data
+                added += 1
+        need = 1 + len(deleted) + sum(1 + (len(data) + 511) // 512 for data in merged.values())
+        if need > target_sectors:
+            raise ValueError(f'merged source requires {need} sectors; bank has {target_sectors}')
+        # Invalidate the inactive superblock first. Until the final, flushed
+        # v2 superblock, a reboot continues selecting the untouched active bank.
+        f.seek(target * SECTOR)
+        f.write(bytes(SECTOR))
+        f.flush()
+        os.fsync(f.fileno())
+        START, SECTORS = target, target_sectors
+        pos = 1
+        for name in sorted(set(merged) | deleted):
+            pos = append_tombstone(f, pos, name) if name in deleted else append(f, pos, name, merged[name])
+        if pos != need:
+            raise ValueError('source merge size mismatch')
+        f.flush()
+        os.fsync(f.fileno())
+        # Validate the written records and contents before publishing the bank.
+        # scan() selects a superblock, so verify the unpublished bank directly.
+        cursor = 1
+        for name in sorted(set(merged) | deleted):
+            at(f, cursor)
+            header = f.read(SECTOR)
+            length, crc, blocks, name_len = struct.unpack_from('<IIII', header, 8)
+            if header[32:32 + name_len] != valid_name(name):
+                raise ValueError(f'merged record mismatch: {name}')
+            if name in deleted:
+                if header[:8] != DELETE_MAGIC or (length, crc, blocks) != (0, 0, 0):
+                    raise ValueError(f'merged deletion mismatch: {name}')
+            else:
+                data = f.read(length)
+                if (header[:8] != FILE_MAGIC or data != merged[name] or
+                        zlib.crc32(data) != crc or blocks != (length + 511) // 512):
+                    raise ValueError(f'merged data mismatch: {name}')
+            cursor += 1 + blocks
+        if test_stop_before_publish:
+            print('Source baseline merge: diagnostic stop before publishing; active bank unchanged')
+            return
+        header = bytearray(SECTOR)
+        header[:8] = b'ZCSRC002'
+        struct.pack_into('<III', header, 8, 2, target_sectors, generation + 1)
+        struct.pack_into('<I', header, 20, zlib.crc32(header[:20]))
+        f.seek(target * SECTOR)
+        f.write(header)
+        f.flush()
+        os.fsync(f.fileno())
+        if select_bank(f) != ('B' if target == BANK_B_START else 'A', generation + 1):
+            raise ValueError('merged source bank was not selected')
+    print(f'Source baseline merge: refreshed {refreshed}, preserved {preserved}, '
+          f'added {added}, retained {len(deleted)} deletions; {need}/{target_sectors} sectors')
+
+
 p = argparse.ArgumentParser(description=__doc__)
 sub = p.add_subparsers(dest='command', required=True)
 seed = sub.add_parser('seed', help='format and seed a newly built GPT image')
@@ -247,7 +401,14 @@ merge_parser.add_argument('disk', type=pathlib.Path)
 merge_parser.add_argument('bundle', type=pathlib.Path)
 merge_parser.add_argument('--replace', action='append', default=[],
                           help='refresh this bundled source path even if it exists or is deleted')
+baseline_merge = sub.add_parser('merge-baseline', help='prototype: merge unchanged sources using an old bundle')
+baseline_merge.add_argument('disk', type=pathlib.Path)
+baseline_merge.add_argument('baseline', type=pathlib.Path)
+baseline_merge.add_argument('bundle', type=pathlib.Path)
+baseline_merge.add_argument('--test-stop-before-publish', action='store_true',
+                            help='diagnostic: leave the newly written bank unpublished')
 args = p.parse_args()
+configure_banks(args.disk)
 if args.disk.stat().st_size < (START + SECTORS) * SECTOR:
     p.error('disk image is too small for the source partition')
 
@@ -255,6 +416,8 @@ if args.command == 'compact':
     compact(args.disk)
 elif args.command == 'merge':
     merge(args.disk, args.bundle, args.replace)
+elif args.command == 'merge-baseline':
+    merge_baseline(args.disk, args.baseline, args.bundle, args.test_stop_before_publish)
 else:
     with args.disk.open('r+b' if args.command != 'inspect' else 'rb') as f:
         if args.command == 'seed':

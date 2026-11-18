@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-17",
+  "platform": "QEMU HVF ARM64 PCI; disposable guests",
+  "iso": "build/utm-parity-goal/titanium-mesh-owner.iso",
+  "iso_sha256": "d199a982a4c02365cd568f51c6fed28f8922687ebb4335f664235b45db2527e8",
+  "issue": "Titanium mesh pixels could remain after the game task exited because the retained overlay did not track the drawing task and Escape was not always routed through the terminal key handler.",
+  "change": "Track a task owner for each mesh pixel; when its task exits retire only that task\u2019s retained and pending mesh pixels. The compositor restores retired pixels before presenting the next frame.",
+  "checks": [
+    "Full 3D suite passed GrModels Man and Ball, KeepAway, Titanium gameplay, Escape and terminal recovery, and remaining graphical regression checks.",
+    "Three consecutive Titanium-only runs passed movement, shooting, Escape, and required a rise in retired pixels with no pending retirement.",
+    "A further Titanium-only run verified no retained mesh pixels after exit.",
+    "Pi desktop target compiled; upstream and ARM64 source checks passed."
+  ],
+  "logs": [
+    "build/utm-parity-goal/titanium-full.log",
+    "build/utm-parity-goal/titanium-repeat.log",
+    "build/utm-parity-goal/titanium-empty.log",
+    "build/utm-parity-goal/titanium-owner.log"
+  ],
+  "limits": [
+    "No physical Pi run of this graphics change has been performed. Two manual UTM runs and repeated QEMU tests reduce but do not eliminate the possibility of other intermittent graphics issues."
+  ],
+  "manual_utm_acceptance": {
+    "date": "2026-11-17",
+    "reported_by": "user",
+    "vm": "ZealOS ARM64 Titanium Release Test 1 GiB",
+    "results": [
+      "Installed system booted and an existing user file survived reboot.",
+      "An upgrade completed and the user file was still present after reboot.",
+      "Titanium was opened and exited twice; the screen cleared both times."
+    ],
+    "record": "docs/acceptance/utm-titanium-user-test-2026-11-17.json"
+  }
+}

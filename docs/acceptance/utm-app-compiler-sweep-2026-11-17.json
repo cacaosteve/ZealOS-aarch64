@@ -1,0 +1,78 @@
+{
+  "date": "2026-11-17",
+  "scope": "QEMU HVF ARM64 PCI guest from current build; disposable test disks, not manual UTM or physical Pi",
+  "kernel_sha256": "6f664d9b09a27094d3811349d9f0b5c1aeb034d2e077e342ab43ab52c8e3",
+  "application_compile": {
+    "compiled": 70,
+    "total": 70,
+    "catalog": "build/utm-parity-goal/sweep-program-catalog.json"
+  },
+  "demo_compile": {
+    "compiled": 206,
+    "total": 206,
+    "catalog": "build/utm-parity-goal/sweep-demo-source-catalog.json"
+  },
+  "full_source_inventory": {
+    "compiled": 193,
+    "total": 340,
+    "blocked": 147,
+    "interpretation": "Individual file compile probes, not full upstream build contexts. Some require unavailable private symbols or x86 hardware; failures need individual investigation."
+  },
+  "normal_loader_context": {
+    "long_inventory": [
+      "ToTheFront failed missing GR_HEIGHT",
+      "X-Caliber failed missing GrLine argument defaults"
+    ],
+    "fresh_guest_retry": "Both loaders passed in a fresh guest after their app entrypoints compiled. Reset/reload in the long catalog did not restore equivalent context.",
+    "log": "build/utm-parity-goal/sweep-normal-retry.log"
+  },
+  "compiler_regression": {
+    "status": "pass",
+    "checks": [
+      "recovery",
+      "context",
+      "source context",
+      "source execution",
+      "RunFile",
+      "exceptions",
+      "MiniCompiler generated expressions"
+    ],
+    "log": "build/utm-parity-goal/sweep-compiler.log"
+  },
+  "runtime": {
+    "passed": [
+      "Mass Spring",
+      "Doodle",
+      "Game of Life",
+      "TicTacToe",
+      "MathAudioDemo rendering",
+      "PredatorPrey",
+      "GrModels",
+      "KeepAway",
+      "Titanium retry",
+      "Chess",
+      "Vocabulary",
+      "Logic",
+      "Budget save and cold reboot",
+      "Psalmody controls and playback",
+      "NetOfDots and Lines"
+    ],
+    "logs": [
+      "build/utm-parity-goal/sweep-interactive.log",
+      "build/utm-parity-goal/sweep-3d-retry.log",
+      "build/utm-parity-goal/sweep-extra-results.json"
+    ]
+  },
+  "open_issues": [
+    "Titanium exit left visible sprite artifacts obscuring a terminal result in the first 3D run; the complete retry passed. Root cause remains unverified.",
+    "The catalog long-run reset/reload context led to false-negative normal-loader checks; isolated retry passed.",
+    "147 individual source probes were blocked in the broad inventory; causes and runtime significance vary, and these are not verified full build failures.",
+    "QEMU checks do not establish manual UTM sound quality or physical Pi behavior."
+  ],
+  "logs": [
+    "build/utm-parity-goal/sweep-app.log",
+    "build/utm-parity-goal/sweep-demo.log",
+    "build/utm-parity-goal/sweep-3d.log",
+    "build/utm-parity-goal/sweep-3d-failure.png"
+  ]
+}

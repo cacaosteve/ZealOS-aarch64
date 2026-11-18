@@ -9,6 +9,8 @@
 #define PI4_SDHCI_CARD_REG_PRESENT_STATE  0x24u
 #define PI4_SDHCI_CARD_REG_POWER_WORD     0x28u
 #define PI4_SDHCI_CARD_REG_TIMEOUT_WORD   0x2cu
+#define PI4_SDHCI_CARD_REG_STATUS_ENABLE 0x34u
+#define PI4_SDHCI_CARD_REG_SIGNAL_ENABLE 0x38u
 #define PI4_SDHCI_CARD_REG_CAPABILITIES   0x40u
 #define PI4_SDHCI_CARD_REG_HOST_VERSION   0xfcu
 
@@ -20,8 +22,8 @@
 #define PI4_SDHCI_CARD_INT_ERROR_DETAIL   0xffff0000u
 #define PI4_SDHCI_CARD_PRESENT_CMD_BUSY   0x00000001u
 #define PI4_SDHCI_CARD_PRESENT_DATA_BUSY  0x00000002u
-#define PI4_SDHCI_CARD_PRESENT_WRITE_PROTECT 0x00080000u
-#define PI4_SDHCI_CARD_PRESENT_INSERTED   0x00100000u
+#define PI4_SDHCI_CARD_PRESENT_WRITE_ENABLED 0x00080000u
+#define PI4_SDHCI_CARD_PRESENT_INSERTED   0x00010000u
 
 #define PI4_SDHCI_CARD_ERR_IO       -1
 #define PI4_SDHCI_CARD_ERR_TIMEOUT  -2
@@ -47,7 +49,7 @@ struct pi4_sdhci_card {
     uint16_t rca;
     uint32_t ocr;
     uint64_t sectors;
-    uint32_t identification_clock_hz;
+    uint32_t clock_hz;
     uint8_t host_version;
     uint8_t high_capacity;
     uint8_t ready;
@@ -135,7 +137,7 @@ static int pi4_sdhci_card_set_clock(struct pi4_sdhci_card *card,
     if (!card->io.write32(card->io.context,
                           PI4_SDHCI_CARD_REG_TIMEOUT_WORD, word))
         return PI4_SDHCI_CARD_ERR_IO;
-    card->identification_clock_hz = actual;
+    card->clock_hz = actual;
     return 0;
 }
 
@@ -220,7 +222,7 @@ static int pi4_sdhci_card_init(struct pi4_sdhci_card *card,
     card->rca = 0;
     card->ocr = 0;
     card->sectors = 0;
-    card->identification_clock_hz = 0;
+    card->clock_hz = 0;
     card->ready = 0;
 
     if (!io->read32(io->context, PI4_SDHCI_CARD_REG_CAPABILITIES, &caps) ||
@@ -239,6 +241,17 @@ static int pi4_sdhci_card_init(struct pi4_sdhci_card *card,
     rc = pi4_sdhci_card_wait_reg(card, PI4_SDHCI_CARD_REG_TIMEOUT_WORD,
              0x01000000u, 0, deadline, &word);
     if (rc) return rc;
+    /* Reset clears status enables. Polling still needs command/data events
+     * latched in INT_STATUS, while delivery to the CPU remains disabled. */
+    if (!io->write32(io->context, PI4_SDHCI_CARD_REG_SIGNAL_ENABLE, 0) ||
+        !io->write32(io->context, PI4_SDHCI_CARD_REG_STATUS_ENABLE,
+                     PI4_SDHCI_CARD_INT_CMD_COMPLETE |
+                     PI4_SDHCI_CARD_INT_XFER_COMPLETE |
+                     PI4_SDHCI_CARD_INT_READ_READY |
+                     PI4_SDHCI_CARD_INT_WRITE_READY |
+                     PI4_SDHCI_CARD_INT_ERROR |
+                     PI4_SDHCI_CARD_INT_ERROR_DETAIL))
+        return PI4_SDHCI_CARD_ERR_IO;
     rc = pi4_sdhci_card_write_byte(card, PI4_SDHCI_REG_HOST_CONTROL,
                                     0u); /* 1-bit, PIO, normal speed */
     if (rc) return rc;
@@ -313,6 +326,10 @@ static int pi4_sdhci_card_init(struct pi4_sdhci_card *card,
                  PI4_SDHCI_RESPONSE_48, 1, 1, 0, 0, response);
         if (rc) return rc;
     }
+    /* Leave identification speed only after the card is selected. Stay
+     * below the default-speed 25 MHz limit without switching bus modes. */
+    rc = pi4_sdhci_card_set_clock(card, base_hz, 12500000u);
+    if (rc) return rc;
     card->ready = 1;
     return 0;
 }
@@ -388,7 +405,7 @@ static int pi4_sdhci_card_write_sector(struct pi4_sdhci_card *card,
     if (!card->io.read32(card->io.context,
                          PI4_SDHCI_CARD_REG_PRESENT_STATE, &present))
         return PI4_SDHCI_CARD_ERR_IO;
-    if (present & PI4_SDHCI_CARD_PRESENT_WRITE_PROTECT)
+    if (!(present & PI4_SDHCI_CARD_PRESENT_WRITE_ENABLED))
         return PI4_SDHCI_CARD_ERR_UNSUPPORTED;
     address = card->high_capacity ? lba : lba * 512u;
     if (address > 0xffffffffu) return PI4_SDHCI_CARD_ERR_RANGE;

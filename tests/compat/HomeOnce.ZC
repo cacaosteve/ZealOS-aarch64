@@ -120,7 +120,7 @@ I64 HomeOnceFinishChecks()
         RegCount("Once/User")>2 || RegCount("Once/System")>2) return 3;
     U8 *saved=DocSave(home_once_terminal->put_doc);
     U8 *needle="Tips of the Day";
-    if (sys_boot_src.u16[0]==BOOT_SRC_DVD) needle="ARM64 live session is ready.";
+    if (sys_boot_src.u16[0]==BOOT_SRC_DVD) needle="Install onto hard drive";
     Bool found=saved && StrMatch(needle,saved);
     Free(saved);
     if (found) return 42;

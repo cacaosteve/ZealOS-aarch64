@@ -401,6 +401,9 @@ static CHashFun *guest_winmgr_tick_fun;
 static int guest_task_frame_active;
 static int guest_task_frame_rgba_ready;
 static uint8_t guest_mesh_previous_mask[800u * 600u];
+static uintptr_t guest_mesh_previous_owner[800u * 600u];
+static uint8_t guest_mesh_retired_mask[800u * 600u];
+static uint64_t guest_mesh_retired_pixels, guest_mesh_retired_pending;
 static uint64_t guest_mesh_overlay_calls;
 static uint64_t guest_mesh_overlay_gate_skips;
 static uint64_t guest_mesh_overlay_resource_skips;
@@ -594,6 +597,7 @@ static int64_t guest_focus_invalid_task;
 static uint64_t guest_focus_cancel_restores;
 static int64_t guest_focus_cancel_master;
 static int64_t guest_parent_off, guest_number_off, guest_name_off, guest_flags_off;
+static int64_t guest_title_off, guest_title_src_off;
 static int64_t guest_wake_jiffy_off;
 static int64_t guest_gs_off;
 static int64_t guest_display_flags_off;
@@ -1984,10 +1988,31 @@ static int64_t host_file_write(int64_t *a) {
     int source_file = path_len >= 3 && path[path_len - 3] == '.' &&
                       (path[path_len - 2] == 'Z' || path[path_len - 2] == 'z') &&
                       (path[path_len - 1] == 'C' || path[path_len - 1] == 'c');
-    if (file_writer && !source_file)
+    if (file_writer && !source_file) {
+        /* Archive directories are visible to FileFind and Cd even when the
+         * writable RedSea tree does not contain them yet. Materialize those
+         * existing directories before writing ordinary files beneath them. */
+        char parent[134];
+        size_t start = !strncmp(path, "disk:", 5) ? 5 : 0;
+        if (path[start] == '/') start++;
+        for (size_t i = start; path[i]; i++) {
+            if (path[i] != '/') continue;
+            memcpy(parent, path, i);
+            parent[i] = 0;
+            const char *name = parent + (!strncmp(parent, "disk:", 5) ? 5 : 0);
+            while (*name == '/') name++;
+            if (!*name || zeal_redsea_dir_exists(name) || !source_dir_exists(name))
+                continue;
+            if (i + 5 >= sizeof(parent)) return -1;
+            memcpy(parent + i, "/.DIR", 6);
+            if (file_writer(parent, "DIR", 3, 0, 0) < 0) {
+                parent[i] = 0;
+                if (!zeal_redsea_dir_exists(name)) return -1;
+            }
+        }
         result = file_writer(path, src, (size_t)length, (uint64_t)a[3],
                              (uint16_t)a[4]);
-    else {
+    } else {
         if (!disk_writer) return -1;
         result = disk_writer(path, src, (size_t)length);
     }
@@ -3111,6 +3136,41 @@ static uint8_t *guest_graphics_surface(void) {
     return NULL;
 }
 static int guest_source_full_screen_active(void);
+static uintptr_t *guest_mesh_owner_surface(void) {
+    const size_t bytes = 800u * 600u * sizeof(uintptr_t);
+    if (!Fs || !Fs->hash_table) return NULL;
+    CHashGlblVar *global = (CHashGlblVar *)HashFind(
+        "bootstrap_mesh_owners", Fs->hash_table, HTT_GLBL_VAR, 1);
+    uintptr_t p = global ? (uintptr_t)global->data_addr : 0;
+    if (!p || p > UINTPTR_MAX - bytes) return NULL;
+    if ((p >= (uintptr_t)data_arena && p + bytes <= (uintptr_t)data_arena + sizeof(data_arena)) ||
+        (p >= (uintptr_t)code_arena && p + bytes <= (uintptr_t)code_arena + sizeof(code_arena)))
+        return (uintptr_t *)p;
+    return NULL;
+}
+static void guest_mesh_forget_task(void *task) {
+    if (!task || !Fs || !Fs->hash_table) return;
+    const size_t count = 800u * 600u;
+    uintptr_t *owners = guest_mesh_owner_surface();
+    CHashGlblVar *global = (CHashGlblVar *)HashFind(
+        "bootstrap_mesh_pixels", Fs->hash_table, HTT_GLBL_VAR, 1);
+    uintptr_t p = global ? (uintptr_t)global->data_addr : 0;
+    uint8_t *pixels = NULL;
+    if (p && p <= UINTPTR_MAX - count &&
+        ((p >= (uintptr_t)data_arena && p + count <= (uintptr_t)data_arena + sizeof(data_arena)) ||
+         (p >= (uintptr_t)code_arena && p + count <= (uintptr_t)code_arena + sizeof(code_arena))))
+        pixels = (uint8_t *)p;
+    for (size_t i = 0; i < count; i++) {
+        if (guest_mesh_previous_mask[i] && guest_mesh_previous_owner[i] == (uintptr_t)task &&
+            !guest_mesh_retired_mask[i]) {
+            guest_mesh_retired_mask[i] = 1;
+            guest_mesh_retired_pixels++;
+            guest_mesh_retired_pending++;
+        }
+        if (owners && pixels && owners[i] == (uintptr_t)task)
+            pixels[i] = 0xff;
+    }
+}
 static uint32_t *guest_graphics_rgba_surface(void) {
     CHashGlblVar *global = (CHashGlblVar *)HashFind(
         "bootstrap_present_raw", Fs->hash_table, HTT_GLBL_VAR, 1);
@@ -3150,6 +3210,7 @@ static void guest_mesh_overlay_present(void) {
     CHashGlblVar *clear_global;
     uint8_t *surface, *mesh;
     uint32_t *rgba, *palette;
+    uintptr_t *owners;
     uintptr_t mesh_addr, palette_addr;
     const size_t count = 800u * 600u;
     int mesh_frame_present = 0;
@@ -3188,6 +3249,7 @@ static void guest_mesh_overlay_present(void) {
         return;
     }
     mesh = (uint8_t *)mesh_addr;
+    owners = guest_mesh_owner_surface();
     palette = (uint32_t *)palette_addr;
     clear_global = (CHashGlblVar *)HashFind(
         "bootstrap_mesh_overlay_clear", Fs->hash_table, HTT_GLBL_VAR, 1);
@@ -3201,9 +3263,16 @@ static void guest_mesh_overlay_present(void) {
             uint8_t base_color = surface[i];
             rgba[i] = palette[base_color < 16 ? base_color : 0];
         }
+        if (guest_mesh_retired_mask[i]) {
+            guest_mesh_previous_mask[i] = 0;
+            guest_mesh_previous_owner[i] = 0;
+            guest_mesh_retired_mask[i] = 0;
+            guest_mesh_retired_pending--;
+        }
     }
     if (clear_mesh) {
         memset(guest_mesh_previous_mask, 0, sizeof(guest_mesh_previous_mask));
+        memset(guest_mesh_previous_owner, 0, sizeof(guest_mesh_previous_owner));
         *(uint64_t *)clear_global->data_addr = 0;
     } else {
         // Mesh documents may redraw only when their window is dirty. Keep the
@@ -3221,6 +3290,8 @@ static void guest_mesh_overlay_present(void) {
                 uint8_t color = mesh[i];
                 if (color != 0xff && color < 16)
                     guest_mesh_previous_mask[i] = color + 1;
+                guest_mesh_previous_owner[i] = (color != 0xff && color < 16 && owners)
+                    ? owners[i] : 0;
             }
         }
     }
@@ -3600,51 +3671,35 @@ static int64_t host_doc_update_task_docs(int64_t *a) {
     (void)FFI_CALL_TOS_1(fun->fun_ptr, a[0]);
     return 1;
 }
-static int64_t host_active_gr_globals(int64_t *a) {
-    CHashGlblVar *global;
+static int64_t host_active_typed_globals(const char *name, const char *class_name) {
     CHashTable *table = host_active_task_hash_table();
-    (void)a;
     if (!table)
         return 0;
-    global = (CHashGlblVar *)HashFind("gr", table, HTT_GLBL_VAR, 1);
-    return global && global->data_addr
-               ? (int64_t)(uintptr_t)global->data_addr
-               : 0;
+    for (int64_t instance = 1;; instance++) {
+        CHashGlblVar *global = (CHashGlblVar *)HashFind((char *)name, table,
+                                                        HTT_GLBL_VAR, instance);
+        if (!global) return 0;
+        if (global->data_addr && global->var_class && global->var_class->base.str &&
+            !global->var_class->ptr_star_cnt && !global->dim.next &&
+            !strcmp(global->var_class->base.str, class_name))
+            return (int64_t)(uintptr_t)global->data_addr;
+    }
+}
+static int64_t host_active_gr_globals(int64_t *a) {
+    (void)a;
+    return host_active_typed_globals("gr", "CGrGlobals");
 }
 static int64_t host_active_mouse_globals(int64_t *a) {
-    CHashGlblVar *global;
-    CHashTable *table = host_active_task_hash_table();
     (void)a;
-    if (!table)
-        return 0;
-    global = (CHashGlblVar *)HashFind("mouse", table, HTT_GLBL_VAR, 1);
-    return global && global->data_addr
-               ? (int64_t)(uintptr_t)global->data_addr
-               : 0;
+    return host_active_typed_globals("mouse", "CMouseStateGlobals");
 }
 static int64_t host_active_mouse_hard_globals(int64_t *a) {
-    CHashGlblVar *global;
-    CHashTable *table = host_active_task_hash_table();
     (void)a;
-    if (!table)
-        return 0;
-    global = (CHashGlblVar *)HashFind("mouse_hard", table,
-                                     HTT_GLBL_VAR, 1);
-    return global && global->data_addr
-               ? (int64_t)(uintptr_t)global->data_addr
-               : 0;
+    return host_active_typed_globals("mouse_hard", "CMouseHardStateGlobals");
 }
 static int64_t host_active_winmgr_globals(int64_t *a) {
-    CHashGlblVar *global;
-    CHashTable *table = host_active_task_hash_table();
     (void)a;
-    if (!table)
-        return 0;
-    global = (CHashGlblVar *)HashFind("winmgr", table,
-                                     HTT_GLBL_VAR, 1);
-    return global && global->data_addr
-               ? (int64_t)(uintptr_t)global->data_addr
-               : 0;
+    return host_active_typed_globals("winmgr", "CWinMgrGlobals");
 }
 static int64_t host_set_winmgr_task(int64_t *a) {
     CHashGlblVar *global;
@@ -4735,6 +4790,8 @@ static void init_guest_fiber(unsigned i, void *parent, const char *name) {
         unsigned char *dst = words + guest_name_off;
         for (unsigned j = 0; j < 31 && name[j]; j++)
             dst[j] = (unsigned char)name[j];
+        memcpy(words + guest_title_off, dst, 32);
+        *(words + guest_title_src_off) = 2; /* TTS_TASK_NAME */
     }
 }
 static void init_guest_context(struct guest_fiber *f) {
@@ -4903,6 +4960,7 @@ static void finish_guest(unsigned i, int64_t result) {
     struct guest_fiber *f = &guest_fibers[i];
     if (f->state != GUEST_RUNNABLE)
         return;
+    guest_mesh_forget_task(f->words);
     if (guest_has_children(f))
         zc_fail("task ended before its children");
     struct guest_fiber *popup_parent = guest_popup_parent(f);
@@ -6188,6 +6246,13 @@ static void guest_keyboard_scan_state_update(uint8_t type, uint64_t scan) {
         raw = merged;
     guest_keyboard_bitmap_update("down_bitmap", merged, type);
     guest_keyboard_bitmap_update("down_bitmap2", raw, type);
+    if (type == 2) { /* MESSAGE_KEY_DOWN */
+        CHashGlblVar *kbd = (CHashGlblVar *)HashFind(
+            "kbd", Fs->hash_table, HTT_GLBL_VAR, 1);
+        if (kbd && kbd->data_addr && kbd->var_class)
+            guest_store_i64_member(kbd->data_addr, kbd->var_class,
+                guest_class_member(kbd->var_class, "last_down_scan_code"), (int64_t)scan);
+    }
 }
 static int64_t poll_guest_keys(void) {
     if (!key_reader)
@@ -7603,6 +7668,10 @@ static int64_t host_timer_seconds_bits(int64_t *a) {
     guest_tS_bits = bits;
     return (int64_t)bits;
 }
+static int64_t host_boot_clock_available(int64_t *a) {
+    (void)a;
+    return guest_boot_timestamp >= 0;
+}
 static int64_t host_unix_time_ns(int64_t *a) {
     (void)a;
     uint64_t frequency;
@@ -8302,6 +8371,8 @@ static void bind_guest_task(void) {
         !task_field(cls, "server_ctrl", 40, -1) ||
         !task_field(cls, "task_num", 8, -1) ||
         !task_field(cls, "task_name", 32, -1) ||
+        !task_field(cls, "task_title", STR_LEN, -1) ||
+        !task_field(cls, "title_src", 1, -1) ||
         !task_field(cls, "win_left", 8, -1) ||
         !task_field(cls, "win_right", 8, -1) ||
         !task_field(cls, "win_top", 8, -1) ||
@@ -8417,6 +8488,8 @@ static void bind_guest_task(void) {
     guest_server_ctrl_off = MemberFind("server_ctrl", cls)->off;
     guest_number_off = MemberFind("task_num", cls)->off;
     guest_name_off = MemberFind("task_name", cls)->off;
+    guest_title_off = MemberFind("task_title", cls)->off;
+    guest_title_src_off = MemberFind("title_src", cls)->off;
     guest_flags_off = MemberFind("task_flags", cls)->off;
     guest_display_flags_off = MemberFind("display_flags", cls)->off;
     guest_put_doc_off = MemberFind("put_doc", cls)->off;
@@ -8649,11 +8722,11 @@ static void guest_parser_warning(CLexer *lex, const char *message) {
     zc_output(output);
     if (guest_task_bound) {
         struct guest_fiber *f = &guest_fibers[guest_current];
-        /* ExeFile2 compiles source statements outside user_compiler_step, so
-         * parser warnings are not held in the deferred diagnostic buffer.
-         * Its GUI terminal suppresses ordinary task output while capturing
-         * the command result; send an immediate compiler warning through the
-         * same terminal writer instead of the obscured framebuffer text. */
+        /* The GUI shell already captures zc_output. Calling its document
+         * writer during parsing can yield before compiler rollback finishes. */
+        if (f->user_output_suppressed)
+            return;
+        /* ExeFile2 runs outside user_compiler_step's deferred diagnostics. */
         if (!f->user_diagnostic_active && f->user_output_writer) {
             FFI_CALL_TOS_2(f->user_output_writer, (int64_t)(uintptr_t)output,
                            (int64_t)(uintptr_t)f->words);
@@ -10489,6 +10562,7 @@ static int load_source_path(const char *path, int merged, int recover) {
         PrsBindCSymbol("ZcWrapF64", host_wrap_f64, 2);
         PrsBindCSymbol("ZcMonotonicNs", host_monotonic_ns, 0);
         PrsBindCSymbol("ZcUnixTimeNs", host_unix_time_ns, 0);
+        PrsBindCSymbol("ZcBootClockAvailable", host_boot_clock_available, 0);
         PrsBindCSymbol("ZcDocFormField", host_doc_form_field, 3);
         PrsBindCSymbol("ZcClassRepSize", host_class_rep_size, 2);
         PrsBindCSymbol("ZcClassRepField", host_class_rep_field, 4);
@@ -10831,6 +10905,9 @@ void zc_init(const void *archive, size_t size, zc_output_fn output) {
     guest_mesh_overlay_sample_rgba = 0;
     guest_mesh_overlay_sample_scanout = 0;
     memset(guest_mesh_previous_mask, 0, sizeof(guest_mesh_previous_mask));
+    memset(guest_mesh_previous_owner, 0, sizeof(guest_mesh_previous_owner));
+    memset(guest_mesh_retired_mask, 0, sizeof(guest_mesh_retired_mask));
+    guest_mesh_retired_pixels = guest_mesh_retired_pending = 0;
     guest_keyboard_route_polls = 0;
     guest_keyboard_route_reads = 0;
     guest_keyboard_route_posts = 0;
@@ -10895,6 +10972,11 @@ void zc_init(const void *archive, size_t size, zc_output_fn output) {
     memset(&code_heap, 0, sizeof(code_heap));
     memset(&guest_stack_heap, 0, sizeof(guest_stack_heap));
     memset(files, 0, sizeof(files));
+    /* The archive survives zreset, but its index is allocated in the arena
+     * being reinitialized. Rebuild the index on the first source lookup. */
+    source_archive_index = NULL;
+    source_archive_index_count = 0;
+    source_archive_index_state = 0;
     arena_init(0, data_arena, sizeof(data_arena));
     arena_init(1, code_arena, sizeof(code_arena));
     Fs = &task;
@@ -11078,7 +11160,7 @@ int zc_start_graphics(void) {
     /* GrInit's normal startup selects a palette before applications can save
      * it. The incremental source boot must do that too, rather than relying
      * on the fallback presenter's lazy initialization of an all-zero palette. */
-    execute_source("<graphics startup>", "PaletteSetStd(FALSE);");
+    execute_source("<graphics startup>", "PaletteSetSlate(FALSE);");
     /* Verify the source ODE pipeline in the same compiler hash that loaded
      * the modules. Later shell calls may run with a task-local Fs/hash table. */
     const char *const ode_symbols[] = {
@@ -11174,6 +11256,11 @@ int zc_start_gui_terminal(void) {
         "/System/DolDoc/DocGet.ZC",
         "/System/DolDoc/DocChar.ZC",
         "/System/DolDoc/DocFind.ZC",
+        "/System/DolDoc/DocLink.ZC",
+        "/System/DolDoc/DocEd.ZC",
+        /* DocFileEd was compiled while DocEd was a cycle-breaking stub.
+         * Rebind the link layer after the real editor exists, then Ed after
+         * the link layer, so stock Ed("file") opens an interactive document. */
         "/System/DolDoc/DocLink.ZC",
         "/System/DolDoc/DocEd.ZC",
         /* DocMenu was compiled against the cycle-breaking DocEd stub.
@@ -11474,6 +11561,9 @@ void zc_status(void) {
     printf("mesh_overlay_colors: zero=%lu nonzero=%lu\n",
            (unsigned long)guest_mesh_overlay_zero_pixels,
            (unsigned long)guest_mesh_overlay_nonzero_pixels);
+    printf("mesh_overlay_retirement: retired=%lu pending=%lu\n",
+           (unsigned long)guest_mesh_retired_pixels,
+           (unsigned long)guest_mesh_retired_pending);
     struct guest_fiber *system_server = &guest_fibers[GUEST_SYSTEM];
     printf("system_server: running=%d separate=%d idle=%d queued=%d\n",
            system_server->state == GUEST_RUNNABLE,

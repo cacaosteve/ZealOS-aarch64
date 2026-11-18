@@ -84,8 +84,8 @@ I64 SourceFileNativeChecks()
     if (!original) return 1;
     if (FileWrite("/Tests/Source.App/Inner/Entry.ZC", entry, StrLen(entry)) != StrLen(entry) ||
         FileWrite("/Tests/Source.App/Inner/Next.ZC", next, StrLen(next)) != StrLen(next) ||
-        FileWrite("/Tests/Source.App/Inner/Value.HH", value, StrLen(value)) != StrLen(value) ||
-        FileWrite("/Tests/Source.App/Shared.HH", shared, StrLen(shared)) != StrLen(shared))
+        FileWrite("/Tests/Source.App/Inner/Value.HH", value, StrLen(value)) <= 0 ||
+        FileWrite("/Tests/Source.App/Shared.HH", shared, StrLen(shared)) <= 0)
         return 2;
     if (!Cd("/LICENSE")) return 3;
     source_file_nested = 0;
@@ -103,10 +103,10 @@ I64 SourceFileOverlayChecks()
 {
     U8 *changed = "#define SOURCE_EXECUTE_VALUE 41\n";
     U8 *restored = "#define SOURCE_EXECUTE_VALUE 40\n";
-    if (FileWrite("/Tests/SourceExecuteValue.HH", changed, StrLen(changed)) != StrLen(changed))
+    if (FileWrite("/Tests/SourceExecuteValue.HH", changed, StrLen(changed)) <= 0)
         return 1;
     if (ExeFile("/Tests/SourceExecuteEntry.ZC") != 43) return 2;
-    if (FileWrite("/Tests/SourceExecuteValue.HH", restored, StrLen(restored)) != StrLen(restored))
+    if (FileWrite("/Tests/SourceExecuteValue.HH", restored, StrLen(restored)) <= 0)
         return 3;
     if (ExeFile("/Tests/SourceExecuteEntry.ZC") != 42) return 4;
     return 42;

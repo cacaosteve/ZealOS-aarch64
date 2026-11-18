@@ -26,7 +26,12 @@ U0 WaitBirth(U8 *data)
 
 U0 WaitPublish(U8 *data)
 {
-    birth_slot = Spawn(&WaitTarget);
+    CTask *replacement = Spawn(&WaitTarget,NULL,"Birth replacement",-1,Fs->parent_task);
+    if (!replacement) return;
+    // BirthWait observes a live task. Keep the replacement alive until the
+    // waiter runs. The orchestrating parent owns it beyond this publisher's exit.
+    Suspend(replacement, TRUE);
+    birth_slot = replacement;
     wait_publish_done++;
 }
 
@@ -97,7 +102,8 @@ I64 TaskWaitChecks()
         wait_birth_done != 1 || wait_publish_done != 1 ||
         birth_seen_num <= birth_old_num)
         return 5;
-    if (!Kill(old) || ZcTaskRun || TaskValidate(old))
+    if (!Kill(birth_slot) || !Kill(old) || ZcTaskRun ||
+        TaskValidate(birth_slot) || TaskValidate(old))
         return 6;
 
     wait_exit_callback_seen = 0;

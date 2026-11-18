@@ -927,17 +927,17 @@
      return rpn->base.next;
      break;
    case __IC_SET_FRAME_SIZE:
-@@ -1501,6 +1525,10 @@
+@@ -1499,6 +1523,10 @@
+     goto ret;
+   case IC_SQRT:
      len = AddBytes(to, len, "$PURPLE$SQRT$FD$\n");
-     goto unop;
-     break;
-+  case IC_ABS:
-+    len = AddBytes(to, len, "$PURPLE$ABS$FD$\n");
 +    goto unop;
 +    break;
-   case IC_SQR:
-     len = AddBytes(to, len, "$PURPLE$SQR$FD$\n");
++  case IC_ABS:
++    len = AddBytes(to, len, "$PURPLE$ABS$FD$\n");
      goto unop;
+     break;
+   case IC_SQR:
 @@ -1539,6 +1567,7 @@
    case IC_POS:
    case IC_NEG:
@@ -946,7 +946,7 @@
    case IC_EQ:
    case IC_ADD_EQ:
    case IC_SUB_EQ:
-@@ -1553,6 +1582,105 @@
+@@ -1553,8 +1582,107 @@
      return 1;
    }
    return 0;
@@ -1006,8 +1006,8 @@
 +  case TK_XOR_EQ: return IC_XOR_EQ;
 +  default: return 0;
 +  }
-+}
-+
+ }
+
 +static void ParseWarnUnnecessaryParen(CCmpCtrl *ccmp, int64_t *ic_stk,
 +                                      int64_t *prec_stk, int64_t stk_ptr,
 +                                      int64_t open_idx) {
@@ -1049,9 +1049,11 @@
 +       (inner_prec == parent_prec &&
 +        (right_child ? IsRightAssoc(parent_op) : !IsRightAssoc(parent_op)))))
 +    ParseWarn(ccmp, "Unnecessary parentheses");
- }
- 
++}
++
  CMemberLst *MemberFind(char *needle, CHashClass *cls) {
+   CMemberLst *lst;
+   for (lst = cls->members_lst; lst; lst = lst->next)
 @@ -1635,13 +1763,14 @@
        }                                                                        \
      }                                                                          \
@@ -1281,10 +1283,13 @@
                // Do nothing
                if (ic->global_var->base.type & HTF_EXTERN)
                  ParseWarn(ccmp, "Can't address of extern symbol");
-@@ -2087,6 +2303,37 @@
-       QueIns(ic, ccmp->code_ctrl->ir_code);
-       goto next;
-       break;
+@@ -2084,7 +2300,38 @@
+       misc->str = string;
+       ic->code_misc = misc;
+     found_str:
++      QueIns(ic, ccmp->code_ctrl->ir_code);
++      goto next;
++      break;
 +    case TK_INS_BIN:
 +      binop_before = 0;
 +      string = ccmp->lex->port_doc_binary;
@@ -1312,18 +1317,15 @@
 +      misc->str = string;
 +      ic->code_misc = misc;
 +    found_binary:
-+      QueIns(ic, ccmp->code_ctrl->ir_code);
+       QueIns(ic, ccmp->code_ctrl->ir_code);
 +      Lex(ccmp->lex);
-+      goto next;
-+      break;
-     case TK_CHR:
-       binop_before = 0;
-       ic = A_CALLOC(sizeof(CRPN), NULL);
-@@ -2275,6 +2522,21 @@
+       goto next;
        break;
+     case TK_CHR:
+@@ -2276,6 +2523,21 @@
      default:
        goto fin;
-+    }
+     }
 +    /* Do not emit a binary operator without its left operand. Likewise,
 +     * prefix operators cannot follow an already complete value. Invalid
 +     * RPN otherwise reaches pointer expansion with a missing ic_class. */
@@ -1338,9 +1340,10 @@
 +    default:
 +      if (want_operand)
 +        ParseErr(ccmp, "Expected an expression before operator.");
-     }
++    }
      if (type == IC_PAREN || type == IC_ARRAY_ACC) {
        prec_stk[stk_ptr] = prec;
+       ic_stk[stk_ptr++] = type;
 @@ -2303,7 +2565,12 @@
      }
    }
@@ -1398,21 +1401,21 @@
    return 0;
  }
  static int64_t PeekKw(CCmpCtrl *ccmp, int64_t kwt) {
-@@ -2354,6 +2626,14 @@
-         return 1;
-       }
+@@ -2356,6 +2628,14 @@
    return 0;
-+}
-+
+ }
+
 +static void PrsStatementEnd(CCmpCtrl *ccmp) {
 +  if (ccmp->lex->port_defer_statement_lex &&
 +      ccmp->lex->port_statement_depth == 1)
 +    ccmp->lex->port_lex_pending = 1;
 +  else
 +    Lex(ccmp->lex);
- }
- 
++}
++
  int64_t PrsGoto(CCmpCtrl *ccmp) {
+   CRPN *rpn;
+   CCodeMisc *misc;
 @@ -2385,7 +2665,7 @@
        ParseErr(ccmp, "Expected a ';'.");
        return 0;
@@ -1525,7 +1528,7 @@
          return 1;
        }
      }
-@@ -2510,11 +2857,25 @@
+@@ -2510,12 +2857,26 @@
      }
      if (import_name)
        A_FREE(import_name);
@@ -1537,7 +1540,7 @@
        ParseErr(ccmp, "Expected a extern name.");
      import_name = A_STRDUP(ccmp->lex->string, NULL);
 +    Lex(ccmp->lex);
-+    goto prs_global;
+     goto prs_global;
 +  } else if (PrsKw(ccmp, TK_KW__INTERN)) {
 +    /* An intrinsic name describes compiler semantics, not an executable
 +     * x86 address. Keep its declaration visible, but unbound on ARM64. */
@@ -1548,9 +1551,10 @@
 +      ParseErr(ccmp, "Expected an intrinsic name after _intern.");
 +    import_name = A_STRDUP(ccmp->lex->string, NULL);
 +    Lex(ccmp->lex);
-     goto prs_global;
++    goto prs_global;
    } else if (PrsKw(ccmp, TK_KW_IMPORT)) {
      flags = PRSF_IMPORT;
+     goto prs_global;
 @@ -2524,14 +2885,24 @@
      if (ccmp->lex->cur_tok != TK_NAME)
        ParseErr(ccmp, "Expected a import name.");
@@ -1609,12 +1613,6 @@
 -          if (0 == memcmp(misc->str, string, str_len)) {
 -            goto found_str;
 -          }
--    }
--    misc = CodeMiscNew(ccmp, CMT_STRING);
--    misc->str_len = str_len;
--    misc->str = string;
--  found_str:
--    rpn->code_misc = misc;
 +    if (!*string && ccmp->lex->cur_tok != ';') {
 +      /* ZealC's "" prefix takes the next expression as the format string:
 +       * "" prompt, value; is Print(prompt, value). */
@@ -1638,7 +1636,12 @@
 +    found_str:
 +      rpn->code_misc = misc;
 +      QueIns(rpn, ccmp->code_ctrl->ir_code);
-+    }
+     }
+-    misc = CodeMiscNew(ccmp, CMT_STRING);
+-    misc->str_len = str_len;
+-    misc->str = string;
+-  found_str:
+-    rpn->code_misc = misc;
      argc = 1;
 -    QueIns(rpn, ccmp->code_ctrl->ir_code);
      for (;;) {
@@ -1842,6 +1845,7 @@
      }
      write_to += base->sz;
    }
+-  if (ccmp->lex->cur_tok != '}')
 +  if (has_brace || allow_implicit_open != 2) {
 +    if (ccmp->lex->cur_tok != '}')
 +      ParseErr(ccmp, "Expected a '}'.");
@@ -1909,15 +1913,16 @@
 +    }
 +  }
 +  if (ccmp->lex->cur_tok != '}') {
-+    ParseErr(ccmp, "Expected a '}'.");
+     ParseErr(ccmp, "Expected a '}'.");
 +    A_FREE(data);
 +    return NULL;
 +  }
-+  Lex(ccmp->lex);
+   Lex(ccmp->lex);
+-  return write_to;
 +  dim->cnt = count;
 +  dim->total_cnt = dim->next ? dim->next->total_cnt : 1;
 +  return data;
-+}
+ }
 +
 +/* Emit stores at the declaration, so expressions and repeated calls use the
 + * current frame. The bootstrap extension is limited to one scalar dimension;
@@ -1948,11 +1953,9 @@
 +    else if (i + 1 != dim->cnt)
 +      ParseErr(ccmp, "Expected another local array element.");
 +  }
-   if (ccmp->lex->cur_tok != '}')
--    ParseErr(ccmp, "Expected a '}'.");
++  if (ccmp->lex->cur_tok != '}')
 +    ParseErr(ccmp, "Expected '}' after local array initializer.");
-   Lex(ccmp->lex);
--  return write_to;
++  Lex(ccmp->lex);
 +}
 +static int PrsSameFunctionABIDepth(CHashFun *a, CHashFun *b, int depth);
 +static int PrsSameCallTypeDepth(CHashClass *a, CHashClass *b, int depth) {
@@ -2010,7 +2013,7 @@
 +}
 +static int PrsSameFunctionABI(CHashFun *a, CHashFun *b) {
 +  return PrsSameFunctionABIDepth(a, b, 0);
- }
++}
  int64_t PrsDecl(CCmpCtrl *ccmp, CHashClass *base, CHashClass *add_to,
                  int64_t *is_func_decl, int64_t flags, char *import_name) {
    if (is_func_decl)
@@ -2138,7 +2141,7 @@
 +        decl->fun_ptr = ccmp->cur_fun->fun_ptr;
 +        decl->base.base.type &= ~(HTF_EXTERN | HTF_INTRINSIC);
 +      }
-+    }
+     }
 +    /* A redeclared forward may initially use a previous implementation.
 +     * Its callers load this slot, so a later definition in the same task
 +     * must replace that binding without rewriting ordinary direct calls. */
@@ -2149,7 +2152,7 @@
 +          (decl->base.flags & CLSF_FORWARD_ALIAS) &&
 +          PrsSameFunctionABI(decl, ccmp->cur_fun))
 +        decl->fun_ptr = ccmp->cur_fun->fun_ptr;
-     }
++    }
      if (ccmp->cur_fun->base.base.str)
        SysSymImportsResolve(ccmp->cur_fun->base.base.str, 0);
 +    if (ccmp->lex->port_fun_complete)
@@ -2176,19 +2179,19 @@
          switch (lst->member_class->raw_type) {
            break;
          case RT_U8i:
-@@ -3087,8 +3752,21 @@
+@@ -3087,7 +3752,6 @@
          case RT_I32i:
          case RT_U64i:
          case RT_I64i:
-+        case RT_FUNC: // func ptr
-+          tmpi = lst->dft_val = PrsI64(ccmp);
-+          if (flags & PRSF_STATIC) {
-+            lst->static_bytes = A_CALLOC(8, NULL);
-+            *(int64_t *)lst->static_bytes = tmpi;
-+          }
-+          break;
-         case RT_PTR:
--        case RT_FUNC: // func ptr
+-        case RT_PTR:
+         case RT_FUNC: // func ptr
+           tmpi = lst->dft_val = PrsI64(ccmp);
+           if (flags & PRSF_STATIC) {
+@@ -3095,6 +3759,20 @@
+             *(int64_t *)lst->static_bytes = tmpi;
+           }
+           break;
++        case RT_PTR:
 +          /* Aggregate class values share RT_PTR with actual pointers.
 +           * They have no pointer stars and own a member list; static class
 +           * initializers must take the recursive layout path below. */
@@ -2196,9 +2199,15 @@
 +              !lst->member_class->ptr_star_cnt &&
 +              lst->member_class->members_lst)
 +            goto static_array;
-           tmpi = lst->dft_val = PrsI64(ccmp);
++          tmpi = lst->dft_val = PrsI64(ccmp);
++          if (flags & PRSF_STATIC) {
++            lst->static_bytes = A_CALLOC(8, NULL);
++            *(int64_t *)lst->static_bytes = tmpi;
++          }
++          break;
+         case RT_F64:
+           tmpf = lst->dft_val_flt = PrsF64(ccmp);
            if (flags & PRSF_STATIC) {
-             lst->static_bytes = A_CALLOC(8, NULL);
 @@ -3108,20 +3786,39 @@
          }
        } else {
@@ -2260,13 +2269,14 @@
        glbl_var->data_addr =
            A_CALLOC(glbl_var->var_class->sz * glbl_var->dim.total_cnt, NULL);
      if (flags & PRSF_IMPORT) {
-@@ -3170,19 +3868,51 @@
+@@ -3170,19 +3868,63 @@
      }
      HashAdd(glbl_var, Fs->hash_table);
    found_glbl:
 -    if (!(flags & PRSF_EXTERN)) {
 -      if (extern_glbl = HashFind(glbl_var->base.str, Fs->hash_table,
 -                                 HTT_GLBL_VAR, 2)) { // Pick 2nd EXTERN(?) Var
+-        extern_glbl->data_addr = glbl_var->data_addr;
 +    if (flags & (PRSF_EXTERN | PRSF__EXTERN)) {
 +      /* Resolve an extern declaration against an earlier guest global when
 +       * the declared object layout agrees. Upstream modules commonly
@@ -2297,9 +2307,21 @@
 +        }
 +      }
 +    } else {
-+      if (extern_glbl = HashSingleTableFind(glbl_var->base.str, Fs->hash_table,
-+                                            HTT_GLBL_VAR, 2)) { // Pick 2nd EXTERN(?) Var
-         extern_glbl->data_addr = glbl_var->data_addr;
++      /* A later definition must not redirect an existing definition of the
++       * same name: compiled code may still use the earlier object's layout.
++       * Only resolve genuinely unresolved, type-compatible externs. */
++      for (inst = 2;; inst++) {
++        extern_glbl = (CHashGlblVar *)HashSingleTableFind(
++            glbl_var->base.str, Fs->hash_table, HTT_GLBL_VAR, inst);
++        if (!extern_glbl)
++          break;
++        if ((extern_glbl->base.type & HTF_EXTERN) && !extern_glbl->data_addr &&
++            PrsSameGlobalType(glbl_var->var_class, extern_glbl->var_class) &&
++            glbl_var->dim.total_cnt == extern_glbl->dim.total_cnt &&
++            PrsSameArrayDim(glbl_var->dim.next, extern_glbl->dim.next)) {
++          extern_glbl->data_addr = glbl_var->data_addr;
++          extern_glbl->base.type &= ~HTF_EXTERN;
++        }
        }
      }
 -    if (!(flags & PRSF_EXTERN))
@@ -2318,7 +2340,7 @@
        } else {
          *(rpn = A_CALLOC(sizeof(CRPN), NULL)) = (CRPN){
              .type = IC_GLOBAL,
-@@ -3193,6 +3923,14 @@
+@@ -3193,6 +3935,14 @@
          (rpn = A_CALLOC(sizeof(CRPN), NULL))->type = IC_EQ;
          QueIns(rpn, ccmp->code_ctrl->ir_code);
        }
@@ -2333,7 +2355,7 @@
      }
      goto ret;
    }
-@@ -3415,6 +4153,7 @@
+@@ -3415,6 +4165,7 @@
      return rpn->raw_type;
    switch (rpn->type) {
    case IC_SQRT:
@@ -2341,7 +2363,7 @@
      AssignRawTypeToNode(ccmp, ICArgN(rpn, 0));
      rpn->ic_class = HashFind("F64", Fs->hash_table, HTT_CLASS, 1);
      return rpn->raw_type = RT_F64;
-@@ -3441,9 +4180,12 @@
+@@ -3441,9 +4192,12 @@
      return rpn->raw_type = RT_F64;
      break;
    case IC_FS:
@@ -2356,7 +2378,7 @@
      break;
    case IC_LOCK: // Lock means "lock *ptr++;",it operates on expressions as a
                  // whole
-@@ -3508,6 +4250,51 @@
+@@ -3508,6 +4262,51 @@
    got_fun:
      if (!fun)
        ParseErr(ccmp, "Invalid type to call."); // TODO add type name
@@ -2408,7 +2430,7 @@
      if (arg > fun->argc && !(fun->base.flags & CLSF_VARGS)) {
        ParseErr(ccmp, "Excess arguments for function");
      }
-@@ -3519,7 +4306,8 @@
+@@ -3519,7 +4318,8 @@
        rpn = ICArgN(orig_rpn, orig_rpn->length - arg - 1);
        if (rpn->type == IC_NOP)
          if (!(mlst->flags & MLF_DFT_AVAILABLE)) {
@@ -2418,7 +2440,7 @@
          }
        mlst = mlst->next;
      }
-@@ -3527,7 +4315,8 @@
+@@ -3527,7 +4327,8 @@
        if (fun->base.flags & CLSF_VARGS && arg >= fun->argc - 2)
          break;
        if (!(mlst->flags & MLF_DFT_AVAILABLE)) {
@@ -2428,7 +2450,7 @@
        }
        mlst = mlst->next;
      }
-@@ -3545,6 +4334,10 @@
+@@ -3545,6 +4346,10 @@
      break;
    case IC_GLOBAL:
      if (rpn->global_var->base.type & HTT_GLBL_VAR) {
@@ -2439,7 +2461,7 @@
        rpn->ic_class = rpn->global_var->var_class;
        rpn->ic_dim = rpn->global_var->dim.next;
        rpn->ic_fun = rpn->global_var->fun_ptr;
-@@ -3655,20 +4448,30 @@
+@@ -3655,20 +4460,30 @@
      break;
    case IC_DEREF:
      AssignRawTypeToNode(ccmp, rpn->base.next);
@@ -2471,16 +2493,15 @@
 -      rpn->ic_class = ((CRPN *)rpn->base.next)->ic_class - 1;
 -    } else {
 -      rpn->ic_dim = rpn->ic_dim->next;
--    }
 +    if (((CRPN *)rpn->base.next)->ic_class->flags & CLSF_FUNPTR) {
 +      rpn->ic_class = ((CRPN *)rpn->base.next)->ic_class;
 +      return rpn->raw_type = RT_FUNC;
-+    }
+     }
 +    rpn->ic_class = ((CRPN *)rpn->base.next)->ic_class - 1;
      rpn->raw_type = rpn->ic_class->raw_type;
      return rpn->raw_type;
      break;
-@@ -3782,6 +4585,8 @@
+@@ -3782,6 +4597,8 @@
      rpn->ic_class = ICFwd(rpn->base.next)->ic_class;
      rpn->ic_fun = ICFwd(rpn->base.next)->ic_fun;
      rpn->ic_dim = ICFwd(rpn->base.next)->ic_dim;
@@ -2489,7 +2510,7 @@
      rpn->raw_type = rpn->ic_class->raw_type;
      return rpn->raw_type;
      break;
-@@ -3824,6 +4629,11 @@
+@@ -3824,6 +4641,11 @@
      rpn->raw_type = RT_I64i;
      goto ret;
      break;
@@ -2501,7 +2522,7 @@
    case IC_F64:
      rpn->raw_type = RT_F64;
      goto ret;
-@@ -3839,6 +4649,12 @@
+@@ -3839,6 +4661,12 @@
      if (ICFwd(rpn->base.next)->ic_dim) {
        rpn->ic_class = ICFwd(rpn->base.next)->ic_class;
        rpn->ic_dim = ICFwd(rpn->base.next)->ic_dim->next;
@@ -2514,7 +2535,7 @@
      } else
        rpn->ic_class = ICFwd(rpn->base.next)->ic_class - 1;
      rpn->ic_fun = ICFwd(rpn->base.next)->ic_fun;
-@@ -3909,9 +4725,11 @@
+@@ -3909,9 +4737,11 @@
  static void PrsMembers(CCmpCtrl *cctrl, CHashClass *bungis, int64_t flags,
                         int64_t *off) {
    int64_t is_func, union_end;
@@ -2526,7 +2547,7 @@
      Lex(cctrl->lex);
      while (cctrl->lex->cur_tok != '}') {
        if (cctrl->lex->cur_tok == ';') {
-@@ -3920,10 +4738,24 @@
+@@ -3920,10 +4750,24 @@
          if (cctrl->lex->cur_tok == '{') {
            PrsMembers(cctrl, bungis, flags | PRSF_UNION, off);
          }
@@ -2552,7 +2573,7 @@
          //
          // Here's the deal,I store the last member in last_m,once I find the
          // members I assign their offsets
-@@ -3934,29 +4766,31 @@
+@@ -3934,29 +4778,31 @@
          do {
            Lex(cctrl->lex);
            PrsDecl(cctrl, base_class, bungis, &is_func, PRSF_CLASS, NULL);
@@ -2607,7 +2628,7 @@
            }
          } while (cctrl->lex->cur_tok == ',');
          if (last_m)
-@@ -3983,6 +4817,7 @@
+@@ -3983,6 +4829,7 @@
          return;
        }
      }
@@ -2615,7 +2636,7 @@
      Lex(cctrl->lex);
    }
    if (flags & PRSF_UNION)
-@@ -4043,6 +4878,8 @@
+@@ -4043,6 +4890,8 @@
        HashAdd(bungis, Fs->hash_table);
    PrsMembers(cctrl, bungis, flags, &off); // This consumes '{'
    // Compute size
@@ -2624,7 +2645,7 @@
    for (last_m = bungis->members_lst; last_m; last_m = last_m->next) {
      if (bungis->sz < (off = last_m->off +
                              last_m->member_class->sz * last_m->dim.total_cnt)) {
-@@ -4101,6 +4938,8 @@
+@@ -4101,6 +4950,8 @@
    int64_t val;
    CCodeMisc *label;
  } CSwitchCase;
@@ -2633,7 +2654,7 @@
  int64_t PrsSwitch(CCmpCtrl *cctrl) {
    if (!PrsKw(cctrl, TK_KW_SWITCH))
      return 0;
-@@ -4113,6 +4952,7 @@
+@@ -4113,6 +4964,7 @@
    int64_t k_low = INT_MAX, k_hi = INT_MIN, last, lo, hi, idx;
    old_break_to = cctrl->code_ctrl->break_to;
    cctrl->code_ctrl->break_to = lb_exit;
@@ -2641,7 +2662,7 @@
    //
    // When we encounter the start: block,we enter a secret function call
    // So when we `break` or we implictly break by hitting the first sub-switch
-@@ -4134,12 +4974,14 @@
+@@ -4134,12 +4986,14 @@
      //
      if (!ParseExpr(cctrl, 0)) {
        ParseErr(cctrl, "Expected an expression.");
@@ -2656,7 +2677,7 @@
        return 0;
      } else
        Lex(cctrl->lex);
-@@ -4147,6 +4989,7 @@
+@@ -4147,6 +5001,7 @@
      Lex(cctrl->lex);
      if (!ParseExpr(cctrl, 0)) {
        ParseErr(cctrl, "Expected an expression.");
@@ -2664,7 +2685,7 @@
        return 0;
      }
      (switch_ir = A_CALLOC(sizeof(CRPN), NULL))->type = IC_BOUNDED_SWITCH;
-@@ -4155,12 +4998,14 @@
+@@ -4155,12 +5010,14 @@
      // start,(cond),end,BOUNDED_SWITCH
      if (cctrl->lex->cur_tok != ')') {
        ParseErr(cctrl, "Expected a ')'.");
@@ -2679,7 +2700,7 @@
      return 0;
    } else
      Lex(cctrl->lex);
-@@ -4208,10 +5053,16 @@
+@@ -4208,10 +5065,16 @@
    }
        tmps->label = label->code_misc;
        if (cctrl->lex->cur_tok == ':') {
@@ -2698,7 +2719,7 @@
        } else {
          lo = last = tmps->val = PrsI64(cctrl);
          if (lo < k_low)
-@@ -4236,11 +5087,13 @@
+@@ -4236,11 +5099,13 @@
          } else {
            hi = lo;
            INS_TMPSS;
@@ -2712,7 +2733,7 @@
            return 0;
          }
        }
-@@ -4251,6 +5104,7 @@
+@@ -4251,6 +5116,7 @@
        }
        if (cctrl->lex->cur_tok != ':') {
          ParseErr(cctrl, "Expected a ':'.");
@@ -2720,7 +2741,7 @@
          return 0;
        }
        lb_dft->flags |= CMF_DEFINED;
-@@ -4268,6 +5122,7 @@
+@@ -4268,6 +5134,7 @@
      } else if (PrsKw(cctrl, TK_KW_START)) {
        if (cctrl->lex->cur_tok != ':') {
          ParseErr(cctrl, "Expected a ':'.");
@@ -2728,7 +2749,7 @@
          return 0;
        } else
          Lex(cctrl->lex);
-@@ -4293,6 +5148,7 @@
+@@ -4293,6 +5160,7 @@
      } else if (PrsKw(cctrl, TK_KW_END)) {
        if (subs.base.last == &subs) {
          ParseErr(cctrl, "Unexpected 'end' statement.");
@@ -2736,7 +2757,7 @@
          return 0;
        }
        QueRem(tmpss = subs.base.last);
-@@ -4309,6 +5165,7 @@
+@@ -4309,6 +5177,7 @@
        A_FREE(tmpss);
        if (cctrl->lex->cur_tok != ':') {
          ParseErr(cctrl, "Expected a ':'.");
@@ -2744,7 +2765,7 @@
          return 0;
        } else
          Lex(cctrl->lex);
-@@ -4317,6 +5174,7 @@
+@@ -4317,6 +5186,7 @@
        goto add_stmt;
      } else {
        ParseErr(cctrl, "Expected a statement.");
@@ -2752,7 +2773,7 @@
        return 0;
      }
    }
-@@ -4362,6 +5220,7 @@
+@@ -4362,6 +5232,7 @@
      switch_ir->code_misc = jmp_tab;
    }
    cctrl->flags = old_flags;
@@ -2760,7 +2781,7 @@
    return 1;
  }
  static void __PrsBindCSymbol(char *name, void *ptr, int64_t naked,
-@@ -4378,12 +5237,14 @@
+@@ -4378,12 +5249,14 @@
          abort();
        }
        if (!fun->fun_ptr || fun->fun_ptr == &DoNothing ||
@@ -2776,7 +2797,7 @@
        }
      }
      SysSymImportsResolve(name, 0);
-@@ -4417,7 +5278,15 @@
+@@ -4417,7 +5290,15 @@
              *exit_misc = CodeMiscNew(cctrl, CMT_LABEL);
    if (!PrsKw(cctrl, TK_KW_TRY))
      return 0;
@@ -2793,7 +2814,7 @@
    *(rpn = A_CALLOC(sizeof(CRPN), NULL)) = (CRPN){
        .type = IC_GLOBAL,
        .global_var = HashFind("AIWNIOS_SetJmp", Fs->hash_table, HTT_FUN, 1),
-@@ -4425,7 +5294,7 @@
+@@ -4425,7 +5306,7 @@
    QueIns(rpn, cctrl->code_ctrl->ir_code);
    *(rpn = A_CALLOC(sizeof(CRPN), NULL)) = (CRPN){
        .type = IC_GLOBAL,
@@ -2802,7 +2823,7 @@
    };
    QueIns(rpn, cctrl->code_ctrl->ir_code);
    (rpn = A_CALLOC(sizeof(CRPN), NULL))->type = IC_CALL;
-@@ -4442,10 +5311,10 @@
+@@ -4442,10 +5323,10 @@
    QueIns(rpn, cctrl->code_ctrl->ir_code);
    // See below note
    PrsStmt(cctrl);
@@ -2815,7 +2836,7 @@
    };
    QueIns(rpn, cctrl->code_ctrl->ir_code);
    (rpn = A_CALLOC(sizeof(CRPN), NULL))->type = IC_CALL;
-@@ -4466,10 +5335,10 @@
+@@ -4466,10 +5347,10 @@
    QueIns(rpn, cctrl->code_ctrl->ir_code);
    // Our catch block
    PrsStmt(cctrl);
@@ -2828,7 +2849,7 @@
    };
    QueIns(rpn, cctrl->code_ctrl->ir_code);
    (rpn = A_CALLOC(sizeof(CRPN), NULL))->type = IC_CALL;
-@@ -4585,6 +5454,7 @@
+@@ -4585,6 +5466,7 @@
      QueIns(rpn, cc->ir_code);                                                  \
      return rpn;                                                                \
    }
@@ -2838,15 +2859,62 @@
  HC_IC_BINDING(HC_ICAdd_Pow, IC_POW);
 --- a/c/optpass.c
 +++ b/c/optpass.c
-@@ -4,6 +4,7 @@
+@@ -3,8 +3,54 @@
+ #include "aiwn_mem.h"
  #include <math.h>
  #include <stddef.h>
++#include <stdio.h>
  #include <stdlib.h>
 +#include <string.h>
  
++extern void zc_output(const char *text);
++
++static void NativePassTraceIR(CCmpCtrl *cc, int bit, const char *name) {
++  if (!(cc->saved_pass_trace & (INT64_C(1) << bit)))
++    return;
++  char header[96];
++  snprintf(header, sizeof(header), "Pass %d (%s):\n", bit, name);
++  zc_output(header);
++  CRPN *sentinel = (CRPN *)cc->code_ctrl->ir_code;
++  CRPN *rpn = (CRPN *)sentinel->base.next;
++  while (rpn != sentinel) {
++    int64_t length = DolDocDumpIR(NULL, 0, rpn);
++    char *text = calloc((size_t)length + 1, 1);
++    if (!text) {
++      zc_output("  <IR trace allocation failed>\n");
++      return;
++    }
++    DolDocDumpIR(text, 0, rpn);
++    zc_output(text);
++    free(text);
++    rpn = ICFwd(rpn);
++  }
++}
++
++static void NativePassTraceCode(CCmpCtrl *cc, const char *code, int64_t size) {
++  if (!(cc->saved_pass_trace & (INT64_C(1) << 10)))
++    return;
++  zc_output("Pass 10 (final AArch64 code):\n");
++  char line[128];
++  for (int64_t offset = 0; offset < size; offset += 16) {
++    int used = snprintf(line, sizeof(line), "%04llX:",
++                        (unsigned long long)offset);
++    int64_t end = offset + 16 < size ? offset + 16 : size;
++    for (int64_t i = offset; i < end && used < (int)sizeof(line) - 5; i++)
++      used += snprintf(line + used, sizeof(line) - (size_t)used,
++                       " %02X", (unsigned char)code[i]);
++    if (used < (int)sizeof(line) - 2) {
++      line[used++] = '\n';
++      line[used] = 0;
++    }
++    zc_output(line);
++  }
++}
++
  static int64_t IsConst(CRPN *rpn) {
    switch (rpn->type) {
-@@ -18,8 +19,13 @@
+   case IC_CHR:
+@@ -18,8 +64,13 @@
  static int64_t PtrWidthOfRPN(CRPN *rpn) {
    int64_t r = 1;
    if (rpn->ic_dim) {
@@ -2856,13 +2924,13 @@
 +     * Its total_cnt already contains the product of the trailing dimensions;
 +     * skipping another node drops one row stride for multidimensional arrays. */
 +    r *= rpn->ic_dim->total_cnt;
-+    r *= rpn->ic_class->sz;
+     r *= rpn->ic_class->sz;
 +  } else if (rpn->ic_class->flags & CLSF_FUNPTR) {
 +    /* Funptrs are CHashFun, not a CHashClass star array — never use [-1]. */
-     r *= rpn->ic_class->sz;
++    r *= rpn->ic_class->sz;
    } else
      r *= rpn->ic_class[-1].sz;
-@@ -32,6 +38,9 @@
+@@ -32,6 +83,9 @@
    CRPN *rpn2 = rpn->base.next, *ic, *last;
    CHashFun *ic_fun;
    CMemberLst *arg, *args_lst_rev;
@@ -2872,7 +2940,7 @@
    for (cnt = 0; cnt != rpn->length; cnt++)
      rpn2 = ICFwd(rpn2);
    AssignRawTypeToNode(cctrl, rpn2);
-@@ -46,7 +55,23 @@
+@@ -46,7 +100,23 @@
        break;
      rpn2 = ICArgN(rpn, rpn->length - cnt - 1); // REVERSE polish notation
      if (rpn2->type == IC_NOP) {
@@ -2897,7 +2965,7 @@
          rpn2->type = IC_F64;
          rpn2->flt = ((double *)&arg->dft_val)[0];
          AssignRawTypeToNode(cctrl, rpn2);
-@@ -56,6 +81,9 @@
+@@ -56,6 +126,9 @@
          AssignRawTypeToNode(cctrl, rpn2);
        }
      } else {
@@ -2907,7 +2975,7 @@
        // If we are passing an F64 to an I64 argument,be sure to convert the F64
        // to a I64
        if ((arg->member_class->raw_type == RT_F64) ^ // Check for difference
-@@ -78,7 +106,20 @@
+@@ -78,7 +151,20 @@
    for (; cnt < cnt2; cnt++) {
      ic = A_CALLOC(sizeof(CRPN), cctrl->hc);
      rpn->length++;
@@ -2929,7 +2997,7 @@
        ic->type = IC_F64;
        ic->flt = ((double *)&arg->dft_val)[0];
        AssignRawTypeToNode(cctrl, ic);
-@@ -88,6 +129,7 @@
+@@ -88,6 +174,7 @@
        AssignRawTypeToNode(cctrl, ic);
      }
      QueIns(ic, rpn);
@@ -2937,7 +3005,7 @@
      arg = arg->next;
    }
    if (ic_fun->base.flags & CLSF_VARGS) {
-@@ -236,9 +278,11 @@
+@@ -236,9 +323,11 @@
        b = rpn->base.next;
        a = ICFwd(b);
        dim = rpn->ic_dim;
@@ -2952,19 +3020,20 @@
          new = A_CALLOC(sizeof(CRPN), cctrl->hc);
          new->type = IC_MUL;
          new->raw_type = RT_I64i;
-@@ -251,10 +295,9 @@
+@@ -251,10 +340,9 @@
          lit->integer = PtrWidthOfRPN(a);
          QueIns(lit, new);
          AssignRawTypeToNode(cctrl, new);
 -        dim = dim->next;
-         rpn->type = IC_ADD;
+-        rpn->type = IC_ADD;
++        rpn->type = IC_ADD;
 +        rpn->raw_type = RT_PTR;
        } else {
 -      aderef:
          new2 = A_CALLOC(sizeof(CRPN), cctrl->hc);
          new2->type = IC_ADD;
          QueIns(new2, rpn);
-@@ -323,7 +366,8 @@
+@@ -323,7 +411,8 @@
        total_off = rpn->local_mem->off;
        for (; a->type == IC_DOT; a = b) {
          b = a->base.next;
@@ -2974,7 +3043,7 @@
          total_off += a->local_mem->off;
          ICFree(a);
        }
-@@ -341,12 +385,15 @@
+@@ -341,12 +430,15 @@
        new3->raw_type = RT_I64i;
        QueIns(new3, new2);
        rpn->type = IC_DEREF;
@@ -2992,7 +3061,7 @@
        new->ic_fun = rpn->ic_fun;
        new->ic_dim = rpn->ic_dim;
        new2 = A_CALLOC(sizeof(CRPN), cctrl->hc);
-@@ -477,6 +524,12 @@
+@@ -477,6 +569,12 @@
    }
  }
  
@@ -3005,7 +3074,7 @@
  void OptPassConstFold(CCmpCtrl *cctrl) {
  #define SET_AB                                                                 \
    if (next->type == IC_F64)                                                    \
-@@ -505,6 +558,11 @@
+@@ -505,6 +603,11 @@
    changed = 0;
    for (rpn = cctrl->code_ctrl->ir_code->next;
         cctrl->code_ctrl->ir_code != rpn;) {
@@ -3017,7 +3086,7 @@
      switch (rpn->type) {
        break;
      case IC_TO_BOOL:
-@@ -1012,6 +1070,9 @@
+@@ -1012,6 +1115,9 @@
        goto next1;
        break;
      case IC_I64:
@@ -3027,7 +3096,7 @@
        goto next1;
        break;
      case IC_F64:
-@@ -1060,7 +1121,9 @@
+@@ -1060,7 +1166,9 @@
    i = 0;
    for (tmpm = cctrl->cur_fun->base.members_lst; tmpm; tmpm = tmpm->next) {
      mv[i].m = tmpm;
@@ -3038,17 +3107,17 @@
        mv[i].m->reg = REG_NONE;
      mv[i++].score = 1;
    }
-@@ -1085,6 +1148,9 @@
-       }
-       break;
+@@ -1087,6 +1195,9 @@
      case IC_GLOBAL:
-+      continue;
-+      break;
-+    case IC_PC_GET:
        continue;
        break;
++    case IC_PC_GET:
++      continue;
++      break;
      case IC_NOP:
-@@ -1259,6 +1325,14 @@
+       continue;
+       break;
+@@ -1259,6 +1370,14 @@
    }
  #else
    for (i = cnt - 1; i >= 0; i--) {
@@ -3063,6 +3132,43 @@
      if (mv[i].m->reg == REG_MAYBE || mv[i].m->reg == REG_ALLOC) {
        if (mv[i].m->member_class->raw_type == RT_F64) {
          if (freg - AIWNIOS_FREG_START < AIWNIOS_FREG_CNT) {
+@@ -1644,19 +1763,35 @@
+               CHeapCtrl *heap) {
+   CRPN *r;
+   int64_t old_flags = cctrl->flags;
++  NativePassTraceIR(cctrl, 0, "source IR");
+   for (r = cctrl->code_ctrl->ir_code->next; r != cctrl->code_ctrl->ir_code;
+        r = r->base.next) {
+     AssignRawTypeToNode(cctrl, r);
+   }
++  NativePassTraceIR(cctrl, 1, "raw types assigned");
+   OptPassFixFunArgs(cctrl);
++  NativePassTraceIR(cctrl, 2, "function arguments fixed");
+   OptPassExpandPtrs(cctrl);
++  NativePassTraceIR(cctrl, 3, "pointers expanded");
+   OptPassConstFold(cctrl);
++  NativePassTraceIR(cctrl, 4, "constants folded");
+   OptPassMergeCommunitives(cctrl);
++  NativePassTraceIR(cctrl, 5, "commutative expressions merged");
+   // OptPassDeadCodeElim(cctrl);
+   OptPassRegAlloc(cctrl);
++  NativePassTraceIR(cctrl, 6, "registers allocated");
+   OptPassRemoveUselessArith(cctrl);
++  NativePassTraceIR(cctrl, 7, "useless arithmetic removed");
+   OptPassRemoveUselessTypecasts(cctrl);
++  NativePassTraceIR(cctrl, 8, "useless casts removed");
+   OptPassMergeAddressOffsets(cctrl);
++  NativePassTraceIR(cctrl, 9, "address offsets merged");
+   cctrl->flags = old_flags;
+-  return OptPassFinal(cctrl, res_sz, dbg_info, heap);
++  int64_t code_size = 0;
++  char *code = OptPassFinal(cctrl, &code_size, dbg_info, heap);
++  NativePassTraceCode(cctrl, code, code_size);
++  cctrl->saved_pass_trace = cctrl->pass_trace;
++  if (res_sz)
++    *res_sz = code_size;
++  return code;
+ }
 --- a/c/hash.c
 +++ b/c/hash.c
 @@ -3,11 +3,22 @@
@@ -3969,7 +4075,16 @@
  } LexTok;
  typedef struct CCodeCtrl {
    struct CCodeCtrl *next;
-@@ -224,6 +260,7 @@
+@@ -215,6 +251,8 @@
+   // I will use the ldxsr/stxr instructions in a loop
+   int64_t aarch64_atomic_loop_start;
+   CRPN *cur_rpn;
++  /* ZealOS PassTrace-compatible mask for native optimizer diagnostics. */
++  int64_t pass_trace, saved_pass_trace;
+ } CCmpCtrl;
+ #define PRSF_CLASS    1
+ #define PRSF_UNION    2
+@@ -224,6 +262,7 @@
  #define PRSF_IMPORT   0x20
  #define PRSF__IMPORT  0x40
  #define PRSF_STATIC   0x80
@@ -3977,7 +4092,7 @@
  enum {
    IC_GOTO,
    IC_SQR,
-@@ -345,6 +382,7 @@
+@@ -345,6 +384,7 @@
    IC_GS,
    IC_TO_BOOL,
    IC_SQRT,
@@ -3985,7 +4100,7 @@
    IC_CNT, // MUST BE THE LAST ITEM
  };
  typedef struct CICArg {
-@@ -441,9 +479,9 @@
+@@ -441,9 +481,9 @@
  void ICFree(CRPN *ic);
  CHashClass *PrsClassNew();
  char *PrsArray(CCmpCtrl *ccmp, CHashClass *base, CArrayDim *dim,
@@ -3997,7 +4112,7 @@
  double PrsF64(CCmpCtrl *ccmp);
  int64_t PrsI64(CCmpCtrl *ccmp);
  int64_t _PrsStmt(CCmpCtrl *ccmp);
-@@ -567,7 +605,7 @@
+@@ -567,7 +607,7 @@
  #  define AIWNIOS_TMP_FREG_START 3
  #  define AIWNIOS_TMP_FREG_CNT   (5 - 3 + 1)
  #  define AIWNIOS_FREG_CNT       (15 - 6 + 1)
@@ -4006,7 +4121,7 @@
      (defined(_M_ARM64) || defined(__aarch64__))
  #  define AIWNIOS_IREG_START     19
  #  define AIWNIOS_IREG_CNT       (27 - 19 + 1)
-@@ -767,3 +805,8 @@
+@@ -767,3 +807,8 @@
  
  void CacheRPNArgs(CCmpCtrl *cctrl);
  extern int64_t DolDocDumpIR(char *to, int64_t, CRPN *);

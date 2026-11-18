@@ -290,7 +290,7 @@ static int vb_init_mmio(volatile uint32_t *best, uint32_t best_ver, uint64_t bes
     g_vb.ver = best_ver;
     g_vb.phys = best_phys;
     g_vb.avail_idx = 0;
-    g_vb.ready = 0; /* set after rw probe in virtio_blk_init */
+    g_vb.ready = 0; /* set after read probe in virtio_blk_init */
     return 1;
 }
 
@@ -441,6 +441,8 @@ static int vb_pci_find_caps(volatile uint8_t *cfg, uint64_t hhdm,
     return *common && *notify && *devcfg;
 }
 
+static unsigned g_vb_pci_disk_count;
+
 static int vb_init_pci(uint64_t hhdm) {
     unsigned dev;
     volatile uint8_t *best_cfg = NULL;
@@ -448,6 +450,7 @@ static int vb_init_pci(uint64_t hhdm) {
     unsigned seen = 0;
 
     g_vb_pci_dbg = 0;
+    g_vb_pci_disk_count = 0;
     if (mmio_map_pci_ecam(hhdm) != 0) {
         g_vb_pci_dbg = 1;
         return 0;
@@ -470,10 +473,10 @@ static int vb_init_pci(uint64_t hhdm) {
             g_vb_pci_dbg = 0x10 | (did & 0xff);
             continue;
         }
-        /* First matching virtio-blk wins (UTM has one boot disk). */
-        best_cfg = cfg;
-        best_did = did;
-        break;
+        g_vb_pci_disk_count++;
+        /* Runtime still binds one disk. Count all candidates so the installer
+         * can refuse an ambiguous destructive operation. */
+        if (!best_cfg) { best_cfg = cfg; best_did = did; }
     }
     if (!best_cfg) {
         g_vb_pci_dbg = seen ? 7 : 8;
@@ -601,24 +604,11 @@ static int vb_init_pci(uint64_t hhdm) {
 static int virtio_blk_read(void *buf, uint64_t sector, uint64_t count);
 static int virtio_blk_write(const void *buf, uint64_t sector, uint64_t count);
 
-static int virtio_blk_probe_rw(void) {
-    uint8_t vb[512];
-    unsigned i;
-    for (i = 0; i < 512; i++) {
-        vb[i] = 0;
-    }
-    vb[0] = 0xC3;
-    vb[1] = 0x3C;
-    if (virtio_blk_write(vb, 15, 1) != 1) {
-        return 0;
-    }
-    for (i = 0; i < 512; i++) {
-        vb[i] = 0;
-    }
-    if (virtio_blk_read(vb, 15, 1) != 1 || vb[0] != 0xC3 || vb[1] != 0x3C) {
-        return 0;
-    }
-    return 1;
+static int virtio_blk_probe_read(void) {
+    uint8_t sector[512];
+    /* Discovery must not modify an unselected disk or a live filesystem.
+     * Durable writes are verified by their callers after explicit requests. */
+    return virtio_blk_read(sector, 0, 1) == 1;
 }
 
 static int virtio_blk_init(uint64_t hhdm) {
@@ -669,9 +659,8 @@ static int virtio_blk_init(uint64_t hhdm) {
     if (!ok) {
         return 0;
     }
-    /* Must prove R/W before advertising the device (Blk* would otherwise
-     * steal traffic from the RAM disk and break shell demos). */
-    if (!virtio_blk_probe_rw()) {
+    /* Validate queue I/O without scribbling into an unknown on-disk layout. */
+    if (!virtio_blk_probe_read()) {
         /* Encode last R/W status: 0x40xx = timeout/status after PCI bring-up. */
         if (g_vb_pci_dbg == 0) {
             int st = g_vb_last_rw;

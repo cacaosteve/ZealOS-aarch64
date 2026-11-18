@@ -2,6 +2,7 @@
 // Load this source, call WindowDragLiveStart, then WindowDragLiveStop when done.
 extern Bool ZcTaskFrameRun();
 extern I64 ZcFbTextPixel(I64 x, I64 y);
+extern I64 ZcFbGraphColor(I64 color);
 extern I64 bootstrap_mouse_draw_calls;
 extern Bool TextLenStr(CTask *task, I64 x, I64 y, I64 len, I64 attr, U8 *str);
 extern U0 BootstrapDrawTaskWin(CTask *task);
@@ -96,6 +97,7 @@ U0 WindowDragLiveRightDraw(CDC *dc, CCtrl *ctrl)
 Bool WindowDragLiveTextVisible(CTask *task, I64 row, I64 cells)
 {//Check for at least one foreground glyph pixel, not a specific font bit.
     I64 x, y, left, top, right, bottom;
+    I64 ink = ZcFbGraphColor(WHITE);
     if (!task || cells <= 0)
         return FALSE;
     left = (task->win_left + 2) * FONT_WIDTH;
@@ -104,7 +106,7 @@ Bool WindowDragLiveTextVisible(CTask *task, I64 row, I64 cells)
     bottom = top + FONT_HEIGHT;
     for (y = top; y < bottom; y++)
         for (x = left; x < right; x++)
-            if (ZcFbTextPixel(x, y) == 0x00FFFFFF)
+            if (ZcFbTextPixel(x, y) == ink)
                 return TRUE;
     return FALSE;
 }
@@ -231,6 +233,7 @@ I64 WindowDragLiveBasicRenderChecks()
 I64 WindowDragLiveRenderChecks()
 {//Require stable overlap pixels across consecutive presented task frames.
     I64 x, y, px, py, found, b_is_front, i, pixel_x, pixel_y;
+    I64 ink, background_a, control_color;
     if (!TaskValidate(window_drag_live_a) || !TaskValidate(window_drag_live_b))
         return 1;
     if (window_drag_live_a->win_left != 15 ||
@@ -252,6 +255,9 @@ I64 WindowDragLiveRenderChecks()
         return 15;
     b_is_front = window_drag_live_b->win_z_num >
                  window_drag_live_a->win_z_num;
+    ink = ZcFbGraphColor(WHITE);
+    background_a = ZcFbGraphColor(window_drag_live_a->text_attr >> 4 & 15);
+    control_color = ZcFbGraphColor(YELLOW);
     pixel_x = window_drag_live_b->pix_left + window_drag_live_right_control.left +
               (window_drag_live_right_control.right -
                window_drag_live_right_control.left) / 2;
@@ -273,8 +279,8 @@ I64 WindowDragLiveRenderChecks()
     // sample the control's upper row where no unrelated window is occluding it.
     if (BootstrapWinTextCellVisible(window_drag_live_b, 49, 22) != b_is_front)
         return 24;
-    if ((b_is_front && window_drag_live_presented_pixel != 0x00FFFF55) ||
-        (!b_is_front && window_drag_live_presented_pixel != 0))
+    if ((b_is_front && window_drag_live_presented_pixel != control_color) ||
+        (!b_is_front && window_drag_live_presented_pixel != background_a))
     {
         Print("window overlap: front=%d pixel=%X at %d,%d cell-visible=%d z=%d\n",
             b_is_front, window_drag_live_presented_pixel, pixel_x, pixel_y,
@@ -298,9 +304,9 @@ I64 WindowDragLiveRenderChecks()
                  window_drag_live_right_control.left) / 2,
             window_drag_live_b->pix_top +
                 window_drag_live_right_control.top + 1);
-        if (b_is_front && window_drag_live_presented_pixel != 0x00FFFF55)
+        if (b_is_front && window_drag_live_presented_pixel != control_color)
             return 26;
-        if (!b_is_front && window_drag_live_presented_pixel != 0)
+        if (!b_is_front && window_drag_live_presented_pixel != background_a)
             return 26;
     }
     // The W in each first label has its top-left glyph pixel set. Check the
@@ -322,7 +328,7 @@ I64 WindowDragLiveRenderChecks()
     found = FALSE;
     for (py = y; py < y + FONT_HEIGHT; py++)
         for (px = x; px < x + FONT_WIDTH; px++)
-            if (ZcFbTextPixel(px, py) != 0)
+            if (ZcFbTextPixel(px, py) != background_a)
                 found = TRUE;
     if (found != b_is_front)
         return 16;
@@ -335,7 +341,7 @@ I64 WindowDragLiveRenderChecks()
     for (py = y; py < y + FONT_HEIGHT; py++)
         for (px = x; px < (window_drag_live_a->win_right + 1) * FONT_WIDTH;
              px++)
-            if (ZcFbTextPixel(px, py) == 0x00FFFFFF)
+            if (ZcFbTextPixel(px, py) == ink)
                 found = TRUE;
     if (found != b_is_front)
         return 17;
@@ -349,7 +355,7 @@ I64 WindowDragLiveRenderChecks()
     for (py = y; py < y + FONT_HEIGHT; py++)
         for (px = x; px < (window_drag_live_b->win_left + 2) * FONT_WIDTH;
              px++)
-            if (ZcFbTextPixel(px, py) == 0x00FFFFFF)
+            if (ZcFbTextPixel(px, py) == ink)
                 found = TRUE;
     if (found == b_is_front)
         return 18;

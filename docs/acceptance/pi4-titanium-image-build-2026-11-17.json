@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-17",
+  "status": "Built and host-verified; physical Pi test pending",
+  "image": "build/zealos-pi4b-titanium-2026-11-17.img",
+  "size_bytes": 1073741824,
+  "sha256": "8a2b8ec822ae03d3a1189ed6d5df6ba0c25968075cb4a8685198192953b90412",
+  "firmware_source": "/Users/steve/Downloads/RPi4_UEFI_Firmware_v1.53",
+  "checks": [
+    "Pi desktop staged payload and firmware files verified by image builder",
+    "FAT boot payload independently extracted and matched staged kernel, booter, source archive, configuration and EFI loader",
+    "Source archive contains latest mesh ownership change",
+    "1 GiB MBR/FAT32 and RedSea bounds checked; builder verified source banks and RedSea initialization",
+    "make check-pi4-platform passed, including simulated SDHCI read, write, flush and read-back"
+  ],
+  "scope": "Automatic SD binding is enabled in the current build. This candidate has not been flashed or tested on physical hardware; automatic directory growth remains unsupported on Pi.",
+  "logs": [
+    "build/pi-titanium-image-build.log",
+    "build/pi-titanium-platform-check.log"
+  ]
+}

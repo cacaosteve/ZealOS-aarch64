@@ -12,6 +12,7 @@
 #include "pi4_pcie_fdt.h"
 #include "pi4_dma.h"
 #include "mmio_map.h"
+#include "lz4_archive.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -653,11 +654,13 @@ void kmain(void) {
     g_handoff.magic0 = ZEAL_HANDOFF_MAGIC_0;
     g_handoff.magic1 = ZEAL_HANDOFF_MAGIC_1;
     g_handoff.size = (uint32_t)sizeof(g_handoff);
-    g_handoff.revision = 9;
+    g_handoff.revision = 11;
     g_handoff.boot_timestamp = date_request.response ? date_request.response->timestamp : -1;
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(g_handoff.boot_counter));
     g_handoff.bootloader_id = ZEAL_BL_LIMINE;
     g_handoff.flags = is_pi ? ZEAL_FLAG_PLAT_PI4 : 0;
+    if (cmdline_has("zeal.diagnostics=1"))
+        g_handoff.flags |= ZEAL_FLAG_DIAGNOSTICS;
     g_handoff.hhdm_offset = hhdm;
     g_handoff.uart_phys = uart_phys;
     g_handoff.boot_el = current_el();
@@ -741,10 +744,22 @@ void kmain(void) {
         g_handoff.sources_virt = (uint64_t)(uintptr_t)sources->address;
         g_handoff.sources_size = sources->size;
     }
-    if (!is_pi && module_request.response->module_count >= 4) {
+    if (module_request.response->module_count >= 4) {
         struct limine_file *install_image = module_request.response->modules[3];
         g_handoff.install_image_virt = (uint64_t)(uintptr_t)install_image->address;
         g_handoff.install_image_size = install_image->size;
+    }
+    if (module_request.response->module_count >= 5) {
+        struct limine_file *upgrade_sources = module_request.response->modules[4];
+        g_handoff.upgrade_sources_virt = (uint64_t)(uintptr_t)upgrade_sources->address;
+        g_handoff.upgrade_sources_size = upgrade_sources->size;
+    }
+    if (module_request.response->module_count >= 6) {
+        struct limine_file *upgrade_booter = module_request.response->modules[5];
+        g_handoff.upgrade_kernel_virt = (uint64_t)(uintptr_t)mod->address;
+        g_handoff.upgrade_kernel_size = mod->size;
+        g_handoff.upgrade_booter_virt = (uint64_t)(uintptr_t)upgrade_booter->address;
+        g_handoff.upgrade_booter_size = upgrade_booter->size;
     }
     kernel_entry_fn entry = load_kernel_elf(uart, hhdm, mod->address, mod->size);
     if (!entry) {
@@ -756,6 +771,36 @@ void kmain(void) {
     }
 
     handoff_reserve_kernel(&g_handoff);
+    if (zeal_lz4_is_archive((const uint8_t *)(uintptr_t)g_handoff.sources_virt,
+                            (size_t)g_handoff.sources_size)) {
+        const uint8_t *archive = (const uint8_t *)(uintptr_t)g_handoff.sources_virt;
+        uint32_t unpacked;
+        uint8_t *output = NULL;
+        if (!zeal_lz4_archive_size(archive, (size_t)g_handoff.sources_size, &unpacked)) {
+            uart_puts(uart, "ERROR: invalid compressed source archive\n");
+            halt();
+        }
+        uint64_t reserve = align_up(unpacked, 4096);
+        for (uint32_t i = 0; i < g_handoff.mem_count; i++) {
+            struct zeal_mem_entry *e = &g_handoff.mem[i];
+            uint64_t base = align_up(e->base, 4096), prefix = base - e->base;
+            if (e->type != ZEAL_MEM_USABLE || prefix > e->length ||
+                reserve > e->length - prefix) continue;
+            output = (uint8_t *)(uintptr_t)(hhdm + base);
+            /* Reserve the prefix too, keeping the remaining entry contiguous. */
+            e->base = base + reserve;
+            e->length -= prefix + reserve;
+            break;
+        }
+        if (!output || !zeal_lz4_archive_decode(archive, (size_t)g_handoff.sources_size,
+                                                 output, unpacked)) {
+            uart_puts(uart, "ERROR: cannot decompress source archive\n");
+            halt();
+        }
+        g_handoff.sources_virt = (uint64_t)(uintptr_t)output;
+        g_handoff.sources_size = unpacked;
+        uart_puts(uart, "compressed source archive verified\n");
+    }
     if (handoff_reserve_pt_pool(&g_handoff) != 0) {
         uart_puts(uart, "warning: no reserved page-table pool\n");
     }

@@ -1140,10 +1140,12 @@ assert b'if (!task)\n\t\treturn NULL;' in user_slice
 home_source = (root / 'upstream/pinned/HomeSys.ZC').read_bytes()
 once_source = (root / 'upstream/pinned/Once.ZC').read_bytes()
 once_overlay = translate_home_once(once_source)
-assert b'ARM64 live session is ready.' in once_overlay
-assert b'Install to a 128 MiB UTM/QEMU VirtIO disk: zinstall, then zinstall ERASE.' in once_overlay
+assert b'Install onto hard drive' in once_overlay
+assert b'if (BootstrapGuiTerminalInstallPrompt())' in once_overlay
+assert b'BootstrapGuiTerminalInstall();' in once_overlay
 assert b'RunFile("::/Misc/OSInstall",, TRUE);' not in once_overlay
-assert b'if (FileFind("::/Misc/Tour"))' in once_overlay
+assert b'if (FileFind("::/Misc/Tour", NULL, FUF_JUST_DIRS))' in once_overlay
+assert b'ExeFile2("Tour.IN");' in once_overlay
 try:
     translate_home_once(once_source.replace(b'RunFile("::/Misc/OSInstall",, TRUE);',
                                              b'RunFile("other",, TRUE);'))
@@ -1174,7 +1176,7 @@ assert b'I64 BootstrapHomeStartUpTasks()' in home_tasks
 assert b'CTask *user = bootstrap_gui_terminal_task;' in home_tasks
 assert b'bootstrap_gui_terminal_home_second = User();' in home_tasks
 assert b'BootstrapGuiTerminalTileHomeWindows(user, bootstrap_gui_terminal_home_second);' in home_tasks
-assert b'Boot Time:%%7.3fs' in home_tasks
+assert b'Boot Time:%7.3fs' in home_tasks
 assert b'#include \\"Once\\";' in home_tasks
 assert b'ACInit(\\"/*;!*/Bible.TXT;!*/Clementine.TXT;!*/PCIDevices.DD;!*/HTML/*;!*/ChangeLog.DD\\")' in home_tasks
 assert b'BootstrapGuiTerminalExeDocFile' in home_tasks
@@ -1206,7 +1208,6 @@ else:
 gui_terminal_source = gui_terminal_bootstrap.decode('utf-8')
 assert 'I64 BootstrapGuiTerminalHomeStart()' in gui_terminal_source
 assert 'BootstrapHomeStartUpTasks() != 0x2a' in gui_terminal_source
-assert 'The DVD Once overlay opens a live session' in gui_terminal_source
 assert 'sys_boot_src.u16[0] == BOOT_SRC_DVD' not in gui_terminal_source
 assert 'bootstrap_gui_terminal_home_second = User();' not in gui_terminal_source
 assert 'XTalk(user, "Cd; #include \\"Once\\";\\n");' not in gui_terminal_source
@@ -1436,7 +1437,8 @@ assert b'Sleep((Now + counts.timer) & 0x7F);' not in zsplash_overlay
 assert b'MStrPrint("%s", "ZealOS ARM64");' in zsplash_overlay
 assert b'DD_OS_NAME_VERSION' not in zsplash_overlay
 assert b'no_warn' not in zsplash_overlay
-assert b'AutoComplete(' not in zsplash_overlay
+assert b'Btr(&ac_task->display_flags, DISPLAYf_WIN_ON_TOP)' in zsplash_overlay
+assert b'Bts(&ac_task->display_flags, DISPLAYf_WIN_ON_TOP)' in zsplash_overlay
 assert b'MouseHard' not in zsplash_overlay and b'DrawStdMouse' not in zsplash_overlay
 assert b'DocPrint(' not in zsplash_overlay
 assert b'CTask *splash_task = Fs;' in zsplash_overlay
@@ -1458,7 +1460,8 @@ assert zsplash_overlay.index(zsplash_loop_end) < \
 assert zsplash_overlay.index(b'while (!CharScan)') < \
        zsplash_overlay.index(b'Fs->draw_it = old_draw_it;')
 assert b'Simplicity Perfected' in zsplash_overlay
-assert b'Kill(bg_task)' not in zsplash_overlay and b'Kill(splash_task)' not in zsplash_overlay
+assert b'if (TaskValidate(bg_task))\n\t\tKill(bg_task);' in zsplash_overlay
+assert b'Kill(splash_task)' not in zsplash_overlay
 gui_terminal = (root / 'upstream/bootstrap/System/GuiTerminal.ZC').read_bytes()
 assert b'BootstrapGuiTerminalExeDocFile(' in gui_terminal and b'::/System/ZSplash.ZC' not in gui_terminal
 assert b'BootstrapHomeStartUpTasks() != 0x2a' in gui_terminal

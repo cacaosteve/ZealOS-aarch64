@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-15",
+  "platform": "Physical Raspberry Pi 4B",
+  "result": "PASS (manual, user confirmed)",
+  "image": {
+    "filename": "zealos-pi4b-sd-current.img",
+    "size_bytes": 1073741824,
+    "sha256": "e173349982d11ea54a92fc4d7e7822c37cab2df6fc168573b24b078ca60162b8"
+  },
+  "manual_checks": [
+    "Booted to the ZealOS desktop from the flashed microSD.",
+    "Used psdopen and edit disk:/test.txt to save hello pi with Esc.",
+    "After a cold reboot, used psdopen and edit disk:/test.txt again. The user confirmed that the editor showed hello pi."
+  ],
+  "evidence": {
+    "flash": "Full 1 GiB card read-back SHA-256 matched the image checksum before eject (build/flash-pi-sd-current.log).",
+    "persistence": "User confirmation in chat on 2026-11-15."
+  },
+  "scope": "Boot and graphical editor save and reopen for a plain text file on the RedSea SD data partition."
+}

@@ -2843,7 +2843,7 @@ public U0 FClose(CFile *f)
                f->flags != BOOTSTRAP_CFILE_WRITE_TAG))
         return;
     if (f->flags == BOOTSTRAP_CFILE_WRITE_TAG &&
-        FileWrite(f->de.full_name, f->clus_buf, f->max_blk) != f->max_blk)
+        FileWrite(f->de.full_name, f->clus_buf, f->max_blk) < 0)
         throw('File');
     Free(f->clus_buf);
     Free(f->de.full_name);
@@ -3516,7 +3516,10 @@ CDC bootstrap_foreground_dc;
 // Meshes are rasterized into a per-frame overlay, then composed after task
 // windows so later window paints cannot erase them and old frames cannot leak.
 U8 bootstrap_mesh_pixels[800 * 600];
-Bool bootstrap_mesh_overlay_clear = FALSE;
+// Identify the window owning each mesh pixel so task teardown can retire its
+// retained layer without erasing meshes belonging to other windows.
+CTask *bootstrap_mesh_owners[800 * 600];
+I64 bootstrap_mesh_overlay_clear = FALSE;
 Bool bootstrap_foreground_ready;
 I32 bootstrap_graphics_depth_pixels[800 * 600];
 I64 bootstrap_graphics_depth_width;
@@ -4291,7 +4294,7 @@ I64 BootstrapGrPackedTablesChecks()
         return 0;
     return 0x2a;
 }
-extern U0 PaletteSetStd(Bool persistent=TRUE);
+extern U0 PaletteSetSlate(Bool persistent=TRUE);
 U0 BootstrapGrZoomTablesInit(CGrGlobals *active_gr)
 {//Build the upstream 1..8 pixel expansion tables once, then bind them per CGrGlobals.
     I64 i, j, k, l, m;
@@ -4398,7 +4401,7 @@ U0 BootstrapGrContextInit()
     BootstrapGrPackedTablesInit(active_gr);
     BootstrapGrZoomTablesInit(active_gr);
     BootstrapBindGrTaskTables(active_gr);
-    PaletteSetStd();
+    PaletteSetSlate();
     if (!bootstrap_present_cache_ready)
     {
         MemSet(bootstrap_present_cache, 0xFF, 800 * 600);
@@ -5120,6 +5123,7 @@ Bool BootstrapSpriteMeshPixel(CDC *dc, I64 x, I64 y, I64 color)
         return FALSE;
     index = y * dc->width_internal + x;
     bootstrap_mesh_pixels[index] = color & 0xff;
+    bootstrap_mesh_owners[index] = task;
     sprite_debug_mesh_buffer_valid++;
     if (color & 0xff)
         sprite_debug_mesh_buffer_nonzero++;
@@ -8534,12 +8538,12 @@ Bool BootstrapCopyFile(U8 *source, U8 *destination)
             src_name += 5;
         if (!StrNCompare(dst_path, "disk:", 5))
             dst_name += 5;
-        if (StrCompare(src_name, dst_name) && !ZcSourceDirExists(dst_path))
+        if (StrICompare(src_name, dst_name) && !ZcSourceDirExists(dst_path))
         {
             contents = FileRead(src_path, &size, &attr);
             if (contents)
             {
-                copied = FileWrite(dst_path, contents, size, 0, attr) == size;
+                copied = FileWrite(dst_path, contents, size, 0, attr) >= 0;
                 Free(contents);
             }
         }
@@ -8559,7 +8563,7 @@ public Bool CopySingle(U8 *source, U8 *destination)
         return FALSE;
     source_path = ZcSourcePath(source);
     destination_path = ZcSourcePath(destination);
-    if (!source_path || !destination_path || !StrCompare(source_path, destination_path))
+    if (!source_path || !destination_path || !StrICompare(source_path, destination_path))
     {
         Free(source_path);
         Free(destination_path);
@@ -8574,7 +8578,7 @@ public Bool CopySingle(U8 *source, U8 *destination)
         if (contents)
         {
             written = FileWrite(destination, contents, size, entry.datetime, attr);
-            copied = written == size;
+            copied = written >= 0;
             if (copied)
                 ZcSourceMetaSet(destination, attr, entry.datetime);
             Free(contents);
@@ -8612,12 +8616,6 @@ Bool Copy(U8 *src_files_find_mask, U8 *dst_files_find_mask=".")
     }
     DirTreeDel(files);
     return copied;
-}
-Bool Move(U8 *f1, U8 *f2)
-{
-    if (f1) {}
-    if (f2) {}
-    return FALSE;
 }
 Bool CopyTree(U8 *src, U8 *dst)
 {
@@ -8776,6 +8774,12 @@ I64 Del(U8 *files_find_mask, Bool make_mask=FALSE, Bool del_dir=FALSE,
     if (make_mask) {}
     if (print_message) {}
     return count;
+}
+Bool Move(U8 *f1, U8 *f2)
+{// Match stock's copy-then-delete behavior; never delete after a failed copy.
+    if (!f1 || !*f1 || !f2 || !*f2 || !Copy(f1, f2))
+        return FALSE;
+    return Del(f1, FALSE, FALSE, FALSE) > 0;
 }
 Bool Type(U8 *filename, I64 trailing_new_lines=1)
 {

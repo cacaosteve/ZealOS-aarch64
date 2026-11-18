@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-13",
+  "platform": "Apple Silicon UTM",
+  "result": "PASS (manual, user confirmed)",
+  "vm": "ZealOS AArch64 Y-N Installer Test 1 GiB",
+  "vm_uuid": "D5FEA732-235B-41C7-9433-3E150BE8DDE2",
+  "iso": {
+    "filename_in_vm_bundle": "zealos-yn-93ff5bed.iso",
+    "sha256": "93ff5bed1fc7fb9a18cf151f22020eb343e5621aa9205017c0354c6f5ed8c812"
+  },
+  "target": "Disposable 1 GiB PCI VirtIO disk",
+  "manual_checks": [
+    "Both single-key Y/N prompts worked. The detected disk showed 1024 MiB.",
+    "Installation completed and the on-screen read-back verification reached 100%.",
+    "After the ISO was detached, the VM booted from the installed VirtIO disk.",
+    "The user reported that the saved file remained present after restarting."
+  ],
+  "evidence": {
+    "install": "User screenshot from 2026-11-13 at 11.52.46 PM and confirmation in chat",
+    "persistence": "User confirmation in chat after disk-only boot and restart",
+    "configuration": "UTM reported a single 1024 MiB attached VirtIO disk after detachment",
+    "automated_companion_logs": [
+      "build/install-yn-acceptance.log",
+      "build/install-yn-recovered-acceptance.log"
+    ]
+  },
+  "scope": "Manual acceptance covers the Yes install path, read-back, disk-only boot and persistence. The automated QEMU run separately covers both No paths and graphical editor reopen."
+}

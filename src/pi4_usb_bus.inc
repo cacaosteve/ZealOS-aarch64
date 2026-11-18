@@ -277,8 +277,13 @@ static int pi4_usb_bus_configure_child(struct pi4_usb_bus_device *d,unsigned siz
         !pi4_xhci_dma_configuration_descriptor_ok(d->buffer,length,2048u,&d->config)) return 0;
     if (pi4_usb_keyboard_select(d->buffer,length,&d->hid)) d->role=1u;
     else if (pi4_usb_mouse_select(d->buffer,length,&d->hid)) d->role=2u;
-    else if (d->config.bot_interface_found) d->role=3u;
-    else return 1; /* Reserved slot, no unsupported endpoint traffic. */
+    else if (d->config.bot_interface_found) {
+#ifndef ZEAL_PI_DIAG
+        /* The live image is already in RAM. Leave installer media idle. */
+        if (pi4_usb_installer_boot()) return 1;
+#endif
+        d->role=3u;
+    } else return 1; /* Reserved slot, no unsupported endpoint traffic. */
     d->stage=g_pi4_bus.stage=10u;
     if (!pi4_usb_bus_control(d,0u,9u,d->config.configuration_value,0u,0u) ||
         !pi4_usb_bus_control(d,0x80u,8u,0u,0u,1u) ||

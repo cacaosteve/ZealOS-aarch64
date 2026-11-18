@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-17",
+  "platform": "Physical Raspberry Pi 4B",
+  "result": "PASS (manual, user confirmed)",
+  "image": {
+    "filename": "zealos-pi4b-auto-sd-2026-11-17.img",
+    "size_bytes": 1073741824,
+    "sha256": "a30b425260409b2d56065df376ac6a8c7254092a992153b5aaac8008632739ab"
+  },
+  "manual_checks": [
+    "Booted from the flashed microSD with writable storage enabled automatically, without running psdopen.",
+    "Saved a file and confirmed it still existed after a cold reboot, without running psdopen."
+  ],
+  "evidence": {
+    "flash": "Full 1 GiB card read-back matched the image SHA-256; card safely ejected (build/flash-pi-auto-sd-terminal.log).",
+    "persistence": "User confirmation in chat on 2026-11-17."
+  },
+  "scope": "Automatic SD storage binding and file persistence across a cold reboot; does not establish full filesystem or application parity."
+}

@@ -2304,6 +2304,14 @@ Final local gates passed: `make check-home-autostart`, `make check-gui-terminal`
 verified guarded erase, full read-back, byte-for-byte disk comparison,
 disk-only desktop boot, and persistence before and after a second cold reboot.
 
+## Pi 4B microSD editor persistence (2026-11-15)
+
+**Passed on physical Pi 4B** with the 1 GiB SD image `e1733499…`. The
+flash read-back matched the full image SHA-256. The user saved `hello pi`
+in `disk:/test.txt` through the graphical editor, powered the Pi off and
+back on, ran `psdopen` again, and confirmed the same text appeared when
+reopening the file. [Image and test record](docs/acceptance/pi4-sd-editor-persistence-2026-11-15.json).
+
 ## Pi 4B native desktop / basic input (2026-10-26)
 
 **Accepted for PI-DESKTOP-2**, staged native kernel SHA-256

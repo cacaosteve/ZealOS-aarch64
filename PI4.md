@@ -4270,3 +4270,9 @@ For exact partition layout, flashing flow, and limits, see
 [`docs/PI4-WRITABLE-STORAGE.md`](docs/PI4-WRITABLE-STORAGE.md). This update
 supersedes the earlier “unimplemented” storage status only for code presence;
 it does not close physical storage acceptance.
+
+**Physical SD editor persistence (2026-11-15):** The user booted the 1 GiB SD
+image `e1733499…` on a Pi 4B, saved `hello pi` in `disk:/test.txt` with the
+graphical editor, and reopened the file after a cold reboot. The SD data
+partition was bound with `psdopen` on each boot.
+[Image and test record](docs/acceptance/pi4-sd-editor-persistence-2026-11-15.json).

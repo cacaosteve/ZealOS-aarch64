@@ -4,6 +4,7 @@
 
 #include "../src/mmio_map.h"
 #include "../src/block_device.h"
+#include "../src/pi4_sd_install.h"
 
 #define TEST_BOOT_LBA 2048u
 #define TEST_BOOT_SECTORS 2048u
@@ -151,11 +152,62 @@ int main(void) {
         memcmp(write_data, read_data, 2u * 512u))
         return fail("translate source-bank B I/O inside the data partition");
 
+    /* Reinstall over old metadata and confirm the writer clears both banks'
+     * first record, verifies the archive, and never touches the boot volume. */
+    uint8_t archive[513] = {0x41, [512] = 0x42};
+    if (!pi4_sd_install(archive, sizeof(archive), 42))
+        return fail("install archive and format partition");
+    uint8_t *boot = sector_ptr(&disk, TEST_DATA_LBA);
+    uint64_t root = zeal_partition_u64(boot + 24);
+    uint64_t bitmap = zeal_partition_u64(boot + 32);
+    uint8_t *entry = sector_ptr(&disk, TEST_DATA_LBA + root) + 256;
+    uint64_t first = zeal_partition_u64(entry + 40);
+    if (boot[3] != 0x88 || boot[510] != 0x55 || boot[511] != 0xaa ||
+        zeal_partition_u64(boot + 16) != g_zbd.redsea_sectors ||
+        root != bitmap + 1 || first != root + 10 ||
+        strcmp((const char *)entry + 2, PI4_INSTALL_ARCHIVE) ||
+        zeal_partition_u64(entry + 48) != sizeof(archive) ||
+        memcmp(archive, sector_ptr(&disk, TEST_DATA_LBA + first), sizeof(archive)))
+        return fail("installed RedSea archive and geometry");
+    uint64_t banks[] = {g_zbd.source_a_lba, g_zbd.source_b_lba};
+    uint8_t empty[512] = {0};
+    for (unsigned i = 0; i < 2; i++) {
+        uint8_t *bank = sector_ptr(&disk, TEST_DATA_LBA + banks[i]);
+        if (memcmp(bank, "ZCSRC001", 8) || memcmp(bank + 512, empty, sizeof(empty)))
+            return fail("clear stale source-bank records");
+    }
+    writes_before_reject = disk.writes;
+    if (pi4_sd_install(archive, PI4_INSTALL_ARCHIVE_MAX, 42) ||
+        disk.writes != writes_before_reject)
+        return fail("reject an archive too large for the partition without writes");
+
     if (memcmp(mbr_before, mbr, sizeof(mbr_before)))
         return fail("leave the partition table unchanged");
     if (memcmp(boot_before, sector_ptr(&disk, TEST_BOOT_LBA),
                (size_t)TEST_BOOT_SECTORS * 512u))
         return fail("leave the firmware FAT partition unchanged");
+
+    struct zeal_block_backend partial = g_zbd;
+    partial.source_b_lba = 0;
+    partial.source_b_sectors = 0;
+    if (zbd_bind(&partial))
+        return fail("reject a layout with only one source bank");
+
+    g_zbd = (struct zeal_block_backend){0};
+    g_vb.ready = 1;
+    g_vb.xport = VB_XPORT_MMIO;
+    g_vb.data = g_vb_dma;
+    g_vb.capacity = ZEAL_RS_SECTS;
+    g_vb.full_capacity = ZEAL_RS_SECTS + 1;
+    if (zbd_bind_virtio() || zbd_ready())
+        return fail("reject a larger MMIO disk even when its window is clamped");
+    g_vb.full_capacity = ZEAL_RS_SECTS;
+    if (!zbd_bind_virtio() || zbd_capacity() != ZEAL_RS_SECTS ||
+        g_zbd.lba_offset || g_zbd.redsea_lba ||
+        g_zbd.redsea_sectors != ZEAL_RS_SECTS ||
+        g_zbd.source_a_sectors || g_zbd.source_b_sectors ||
+        zbd_volume_range_valid(ZEAL_RS_SECTS - 1, 2))
+        return fail("bind the bounded legacy MMIO RedSea volume");
 
     free(boot_before);
     free(disk.bytes);

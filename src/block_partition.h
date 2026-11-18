@@ -210,7 +210,7 @@ static int zeal_partition_scan(zeal_partition_read_fn read_sector,
         if (status != 0 && status != 0x80)
             return ZEAL_PARTITION_INVALID;
         if (type == 0xee) {
-            protective = 1;
+            protective++;
             continue;
         }
         if (type == 0x05 || type == 0x0f || type == 0x85)
@@ -223,7 +223,9 @@ static int zeal_partition_scan(zeal_partition_read_fn read_sector,
         if (result != ZEAL_PARTITION_OK) return result;
     }
     if (protective) {
-        *part_count = 0;
+        /* Hybrid MBR entries can designate regions used independently by
+         * firmware. Reject an ambiguous writable layout. */
+        if (*part_count || protective != 1) return ZEAL_PARTITION_UNSUPPORTED;
         return zeal_partition_scan_gpt(read_sector, context, disk_sectors,
                                        parts, part_capacity, part_count);
     }

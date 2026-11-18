@@ -3898,9 +3898,21 @@ int64_t PrsDecl(CCmpCtrl *ccmp, CHashClass *base, CHashClass *add_to,
         }
       }
     } else {
-      if (extern_glbl = HashSingleTableFind(glbl_var->base.str, Fs->hash_table,
-                                            HTT_GLBL_VAR, 2)) { // Pick 2nd EXTERN(?) Var
-        extern_glbl->data_addr = glbl_var->data_addr;
+      /* A later definition must not redirect an existing definition of the
+       * same name: compiled code may still use the earlier object's layout.
+       * Only resolve genuinely unresolved, type-compatible externs. */
+      for (inst = 2;; inst++) {
+        extern_glbl = (CHashGlblVar *)HashSingleTableFind(
+            glbl_var->base.str, Fs->hash_table, HTT_GLBL_VAR, inst);
+        if (!extern_glbl)
+          break;
+        if ((extern_glbl->base.type & HTF_EXTERN) && !extern_glbl->data_addr &&
+            PrsSameGlobalType(glbl_var->var_class, extern_glbl->var_class) &&
+            glbl_var->dim.total_cnt == extern_glbl->dim.total_cnt &&
+            PrsSameArrayDim(glbl_var->dim.next, extern_glbl->dim.next)) {
+          extern_glbl->data_addr = glbl_var->data_addr;
+          extern_glbl->base.type &= ~HTF_EXTERN;
+        }
       }
     }
     if (!(flags & (PRSF_EXTERN | PRSF__EXTERN)))
