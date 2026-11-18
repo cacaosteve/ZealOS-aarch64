@@ -864,7 +864,9 @@ ZealOS live distribution or installer.
   namespace. It accepts simple expression statements, caller wake,
   child-server exit, and `JOBf_FREE_ON_COMPLETE`. At that stage, `TaskText`,
   input filters, broader job dispatch, task-local compiler state, and
-  preemptive scheduling remained outside the bridge.
+  full multicore scheduling remained outside the bridge. The pinned original
+  scheduler describes cooperative round-robin execution with one queue per
+  core; it should not be characterized here as a preemptive scheduler.
 
 ## Recorded validation — job wake and one-shot server exit
 

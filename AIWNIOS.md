@@ -25,9 +25,11 @@ including a variable format after an empty string. The freestanding `Print`
 bridge supports only the bounded subset listed in `COMPATIBILITY.md`.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for commands, reproducible tests and
-limitations. Passing this gate does not establish full ZealC compatibility or
-supply ZealOS tasks, Adam, the editor, native installation or HCRT. The imported
-compiler's dialect differences are explicit gaps to test and resolve.
+limitations. At that milestone, the compiler gate alone did not supply ZealOS
+tasks, Adam, the editor, native installation or HCRT. Later work added a
+bounded task bridge, graphical editor and UTM installer; these do not establish
+full ZealC compatibility. The imported compiler's dialect differences remain
+gaps to test and resolve.
 
 ## Historical investigation
 

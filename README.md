@@ -17,6 +17,15 @@ ZealOS-derived desktop and programs on a custom ARM64 kernel and runtime, using
 an adapted Aiwnios compiler. It does not boot the original x86-64 ZealOS kernel
 or yet provide full application, hardware, or behavioral compatibility.
 
+**Compiler compatibility:** Stock ZealOS ZealC is the compatibility target.
+The ARM64 compiler starts with Aiwnios and includes local changes for ZealOS
+source and behavior; it is neither the original ZealC compiler nor unmodified
+Aiwnios. Some source uses original compiler-private interfaces, x86 assembly,
+or hardware-specific code that this port does not implement. Other syntax and
+runtime behavior may still differ or be untested. Some bundled sources use
+ARM64 adaptations; see [compiler integration and its historical notes](AIWNIOS.md)
+and [compatibility evidence](COMPATIBILITY.md).
+
 QEMU/UTM has an accepted ARM64 ISO install, disk-only desktop boot and
 saved-data persistence milestone. Physical Pi 4B UEFI boots the native
 graphical terminals with working USB keyboard, pointer, menu clicks and `40+2;` returning `42`. The user has also confirmed Pi audio
@@ -322,7 +331,9 @@ task rings, including `TaskFocusNext` selection and child unlink on teardown.
 `TaskSpawnQueueChecks` exercise
 those paths. Most other x86 intrinsics and unresolved externals
 remain unavailable. This does not boot the upstream kernel or provide its
-preemptive scheduler.
+full multicore scheduler: the original describes cooperative round-robin
+scheduling with a task queue on each core; this bridge implements a bounded
+single-CPU cooperative subset.
 
 The preserved installer milestone ISO has SHA-256
 `52c214c29a9c23d86c94899e8ef2ba94bd4a21231c92ecdd649714708e2bc627`.
