@@ -1,6 +1,6 @@
 # Source and provenance bundle
 
-These upstream snapshots are provided for review and distribution alongside the preview images. GitHub source archives omit Git submodule contents; the separate `edk2-*` dependency archives correspond to the first-level gitlinks in the pinned EDK2 tree. The included Linux source reproduces both overlays byte for byte, and Limine source plus the supplied patch reproduces the EFI executable byte for byte. Recursive dependency completeness and the missing Aiwnios copyright notice remain to be confirmed; see `third-party-notices.md`.
+These upstream snapshots are provided for review and distribution alongside the preview images. GitHub source archives omit Git submodule contents; the separate `edk2-*` dependency archives correspond to the first-level gitlinks in the pinned EDK2 tree. The included Linux source reproduces both overlays byte for byte, and Limine source plus the supplied patch reproduces the EFI executable byte for byte. Recursive dependency completeness and the upstream Aiwnios copyright-notice ambiguity remain documented; see `third-party-notices.md`.
 
 - `pftf-rpi4-ab5d6c98.tar.gz`: https://github.com/pftf/RPi4/tree/ab5d6c98fcf9c38a95b11ea862e701d9c27d5653
 - `edk2-2970e569.tar.gz`: https://github.com/tianocore/edk2/tree/2970e5699ba6267f3384ffab20f96647578aebc8

@@ -51,11 +51,15 @@ The firmware release tag points to pftf/RPi4 commit
 - Aiwnios code is pinned to commit `e155e87a4a4ddae4cd7f25685d9db8869fd45a40`.
   Attribute the project to nrootconauto and contributors; the repository's
   history records nrootconauto as author of the license's introduction in
-  commit `05cbed69dfe869cde1083662045f0625be666551`. The exact upstream
-  BSD-3-Clause text and our changes are included. The license referred to an
+  commit `05cbed69dfe869cde1083662045f0625be666551`. The [upstream repository](https://github.com/aiwnios/Aiwnios)
+  identifies BSD-3-Clause, and its current LICENSE is byte-for-byte identical
+  to the pinned license (SHA-256
+  `c4f9e642fb174c3e3bcbc69c32cc5f73439b2f8051af5c03476e351a56d88009`).
+  The exact upstream license text and our changes are included. The license referred to an
   "above copyright notice" from its first commit, but none was included.
   Historical authorship is not a verified substitute for an absent copyright
-  statement; clarification from the project or rights holders remains needed.
+  statement; the release owner can seek clarification from the project or
+  rights holders if a definitive copyright attribution is needed.
 - Limine 12.9.0 is included in both images. Its BSD-2-Clause license,
   `3RDPARTY.md`, dependency licenses, upstream source archive and the
   `limine-12.9.0-qemu-virt-pl011-hhdm.patch` accompany this candidate.
@@ -68,6 +72,6 @@ The firmware release tag points to pftf/RPi4 commit
 
 `SHA256SOURCES` records the staged source archive hashes. Source archive links,
 component revisions, and coverage limitations are listed in `SOURCES.md`.
-The checksums are integrity checks, not signatures. Do not publish the candidate
-until the missing Aiwnios copyright attribution has been clarified and the notices
-have been reviewed for the intended distribution.
+The checksums are integrity checks, not signatures. The Aiwnios copyright line
+is absent upstream; review that ambiguity and the notices for the intended
+distribution.
