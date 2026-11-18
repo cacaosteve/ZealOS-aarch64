@@ -24,7 +24,9 @@ Aiwnios. Some source uses original compiler-private interfaces, x86 assembly,
 or hardware-specific code that this port does not implement. Other syntax and
 runtime behavior may still differ or be untested. Some bundled sources use
 ARM64 adaptations; see [compiler integration and its historical notes](AIWNIOS.md)
-and [compatibility evidence](COMPATIBILITY.md).
+and [compatibility evidence](COMPATIBILITY.md). On the current development
+build, compiling some sparse switch cases can exhaust the compiler's memory;
+the complete source inventory and its runtime behavior remain under review.
 
 QEMU/UTM has an accepted ARM64 ISO install, disk-only desktop boot and
 saved-data persistence milestone. Physical Pi 4B UEFI boots the native
